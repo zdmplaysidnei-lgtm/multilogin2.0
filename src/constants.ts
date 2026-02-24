@@ -1,4 +1,4 @@
-
+﻿
 import { AppSettings, Profile, Role, User, FingerprintConfig } from './types';
 
 // O sistema agora é 100% Supabase. 
@@ -32,7 +32,7 @@ export const INITIAL_SETTINGS: AppSettings = {
     size: 'md',
     textStyle: {
       fontFamily: 'Inter',
-      gradientFrom: '#a855f7',
+      gradientFrom: '#E50914',
       gradientTo: '#ec4899',
       gradientDirection: 'to right',
       fontSize: 2,

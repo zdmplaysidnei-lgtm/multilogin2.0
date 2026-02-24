@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+﻿import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown } from 'lucide-react';
 import { Profile } from '../types';
 
@@ -584,7 +584,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
       <div onMouseDown={startDrag} onDoubleClick={() => setIsMaximized(!isMaximized)} className="bg-[#202020] flex items-center px-4 pt-2 justify-between border-b border-gray-800 cursor-grab active:cursor-grabbing select-none">
         <div className="flex gap-2 pb-2" onMouseDown={e => e.stopPropagation()}>
-          <div onClick={onClose} className="w-3.5 h-3.5 rounded-full bg-red-500 cursor-pointer hover:bg-red-400" />
+          <div onClick={onClose} className="w-3.5 h-3.5 rounded-full bg-[#E50914] cursor-pointer hover:bg-red-400" />
           <div onClick={() => setIsMaximized(!isMaximized)} className="w-3.5 h-3.5 rounded-full bg-green-500 cursor-pointer hover:bg-green-400" />
         </div>
 
@@ -596,14 +596,14 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               onClick={() => setActiveTabIndex(idx)}
               className={`px-3 py-1 rounded-t text-[10px] flex items-center gap-2 max-w-[150px] cursor-pointer transition-all ${activeTabIndex === idx ? 'bg-[#333] text-white' : 'bg-black/20 text-gray-500 hover:bg-[#252525]'}`}
             >
-              <Globe size={10} className={activeTabIndex === idx ? "text-purple-400" : "text-gray-600"} />
+              <Globe size={10} className={activeTabIndex === idx ? "text-[#FF6B6B]" : "text-gray-600"} />
               <span className="truncate font-bold">Aba {idx + 1}</span>
             </div>
           ))}
         </div>
 
         <div className="text-gray-500 text-[10px] font-bold uppercase flex gap-3 items-center pb-2">
-          <ShieldCheck size={12} className="text-green-500" /> Multilogin Sidnei
+          <ShieldCheck size={12} className="text-green-500" /> Multilogin Rateioflix
         </div>
       </div>
 
@@ -628,7 +628,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
             <Search size={16} />
           </button>
           {profile.discordToken && (
-            <button onClick={() => executeDiscordTokenLogin(activeWebview)} className="p-1.5 rounded text-indigo-400 hover:bg-indigo-900/20 transition-all" title="Login Discord">
+            <button onClick={() => executeDiscordTokenLogin(activeWebview)} className="p-1.5 rounded text-red-400 hover:bg-red-900/20 transition-all" title="Login Discord">
               <MessageCircle size={16} />
             </button>
           )}
@@ -637,7 +637,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               <PlayCircle size={16} />
             </button>
           )}
-          <button onClick={() => performCloudSync(true)} disabled={isSyncing} className={`p-1.5 rounded ${isSyncing ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`} title="Sincronizar Nuvem">
+          <button onClick={() => performCloudSync(true)} disabled={isSyncing} className={`p-1.5 rounded ${isSyncing ? 'text-[#FF6B6B]' : 'text-gray-400 hover:text-white'}`} title="Sincronizar Nuvem">
             <UploadCloud size={16} className={isSyncing ? 'animate-bounce' : ''} />
           </button>
           <button onClick={() => setAutoFillEnabled(!autoFillEnabled)} className={`p-1.5 rounded ${autoFillEnabled ? 'text-green-500 bg-green-900/10' : 'text-gray-500'}`} title="Auto-Preenchimento"><Key size={16} /></button>
@@ -666,7 +666,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           <button onClick={handleSearchNext} className="p-1 text-gray-400 hover:text-white" title="Próximo (Enter)">
             <ChevronDown size={14} />
           </button>
-          <button onClick={closeSearch} className="p-1 text-gray-400 hover:text-red-400" title="Fechar (Esc)">
+          <button onClick={closeSearch} className="p-1 text-gray-400 hover:text-[#FF6B6B]" title="Fechar (Esc)">
             <X size={14} />
           </button>
         </div>
@@ -676,7 +676,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       {download && (
         <div className="bg-[#252525] border-b border-gray-700 px-4 py-2 flex items-center gap-4 animate-fade-in">
           <div className="p-1.5 bg-blue-600/20 rounded-lg text-blue-400">
-            {download.state === 'downloading' ? <Download size={14} className="animate-bounce" /> : download.state === 'success' ? <CheckCircle size={14} className="text-green-500" /> : <AlertCircle size={14} className="text-red-500" />}
+            {download.state === 'downloading' ? <Download size={14} className="animate-bounce" /> : download.state === 'success' ? <CheckCircle size={14} className="text-green-500" /> : <AlertCircle size={14} className="text-[#E50914]" />}
           </div>
           <div className="flex-1">
             <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">
@@ -684,7 +684,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               <span>{download.state === 'downloading' ? `${download.progress}%` : download.state.toUpperCase()}</span>
             </div>
             <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
-              <div className={`h-full transition-all duration-300 ${download.state === 'success' ? 'bg-green-500' : download.state === 'error' ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${download.progress}%` }} />
+              <div className={`h-full transition-all duration-300 ${download.state === 'success' ? 'bg-green-500' : download.state === 'error' ? 'bg-[#E50914]' : 'bg-blue-500'}`} style={{ width: `${download.progress}%` }} />
             </div>
           </div>
           <button onClick={() => setDownload(null)} className="text-gray-600 hover:text-white"><X size={14} /></button>
@@ -708,13 +708,13 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           ))
         ) : (
           <div className="absolute inset-0 bg-[#0f0f0f] flex flex-col items-center justify-center gap-6">
-            <Database className="w-16 h-16 text-purple-600 animate-pulse" />
-            <h3 className="text-purple-400 font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 143)...</h3>
+            <Database className="w-16 h-16 text-[#E50914] animate-pulse" />
+            <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 143)...</h3>
           </div>
         )}
         {isLoading && !isRestoringSession && (
           <div className="absolute inset-0 bg-black/10 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10">
-            <RefreshCw className="w-8 h-8 text-purple-600 animate-spin" />
+            <RefreshCw className="w-8 h-8 text-[#E50914] animate-spin" />
           </div>
         )}
       </div>

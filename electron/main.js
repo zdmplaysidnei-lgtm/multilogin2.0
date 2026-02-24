@@ -1,21 +1,23 @@
-const { app, BrowserWindow, ipcMain, session, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
 const proxyChain = require('proxy-chain');
+const AdmZip = require('adm-zip');
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+// Inicializa o plugin stealth padrão
 puppeteer.use(StealthPlugin());
 
 // Aumenta o limite de listeners para evitar avisos em perfis com muitas abas
 process.setMaxListeners(0);
 
-// 🔥 CORREÇÃO: Verificar se app existe antes de configurar
+// 🔥 CORREÇÃO: Remover AutomationControlled global que causa barra amarela
 if (app && app.commandLine) {
-    app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
     app.commandLine.appendSwitch('no-sandbox');
+    // AutomationControlled removido daqui para evitar o alerta do Chrome
 }
 
 const SYNC_PORT = 19999;
@@ -57,25 +59,178 @@ function getExtensionsPath() {
 
 // 🔌 FUNÇÃO PARA LISTAR TODAS AS EXTENSÕES A SEREM CARREGADAS
 function getExtensionsList() {
-    const extensionsDir = getExtensionsPath();
-    if (!extensionsDir) return [];
+    const allExtensions = [];
 
-    const extensions = [];
+    // 1. Extensões embutidas (pasta extensions/ do projeto)
+    const extensionsDir = getExtensionsPath();
+    console.log(`🔌 [EXT-SCAN] Pasta embutida: ${extensionsDir || 'NÃO ENCONTRADA'}`);
+    if (extensionsDir) {
+        try {
+            const subdirs = fs.readdirSync(extensionsDir);
+            for (const subdir of subdirs) {
+                const extFullPath = path.join(extensionsDir, subdir);
+                const manifestPath = path.join(extFullPath, 'manifest.json');
+                if (fs.statSync(extFullPath).isDirectory() && fs.existsSync(manifestPath)) {
+                    allExtensions.push(extFullPath);
+                    console.log(`🔌 [EXTENSÃO EMBUTIDA] Encontrada: ${subdir}`);
+                }
+            }
+        } catch (e) {
+            console.error(`❌ [EXTENSÕES] Erro ao listar extensões embutidas:`, e.message);
+        }
+    }
+
+    // 2. Extensões do usuário (pasta user-extensions/ no userData) — somente as ATIVADAS
+    const userExtDir = getUserExtensionsPath();
+    const config = getExtensionsConfig();
+    console.log(`🔌 [EXT-SCAN] Pasta do usuário: ${userExtDir}`);
+    console.log(`🔌 [EXT-SCAN] Config: ${JSON.stringify(config)}`);
     try {
-        const subdirs = fs.readdirSync(extensionsDir);
+        const subdirs = fs.readdirSync(userExtDir);
         for (const subdir of subdirs) {
-            const extFullPath = path.join(extensionsDir, subdir);
+            if (subdir === 'extensions-config.json') continue; // pula o config
+            const extFullPath = path.join(userExtDir, subdir);
             const manifestPath = path.join(extFullPath, 'manifest.json');
-            // Só adiciona se for um diretório com manifest.json (extensão válida)
-            if (fs.statSync(extFullPath).isDirectory() && fs.existsSync(manifestPath)) {
-                extensions.push(extFullPath);
-                console.log(`🔌 [EXTENSÃO] Encontrada: ${subdir}`);
+            const isDir = fs.statSync(extFullPath).isDirectory();
+            const hasManifest = fs.existsSync(manifestPath);
+            console.log(`🔌 [EXT-SCAN] ${subdir}: isDir=${isDir}, hasManifest=${hasManifest}`);
+            if (isDir && hasManifest) {
+                // Verifica se está ativada (padrão: ativada)
+                const isEnabled = config[subdir]?.enabled !== false;
+                if (isEnabled) {
+                    allExtensions.push(extFullPath);
+                    console.log(`🔌 [EXTENSÃO USUÁRIO] Carregando: ${subdir} -> ${extFullPath}`);
+                } else {
+                    console.log(`⏸️ [EXTENSÃO USUÁRIO] Desativada: ${subdir}`);
+                }
             }
         }
     } catch (e) {
-        console.error(`❌ [EXTENSÕES] Erro ao listar extensões:`, e.message);
+        console.log(`⚠️ [EXTENSÕES] Pasta user-extensions não existe ainda: ${e.message}`);
     }
-    return extensions;
+
+    // 🔍 VERIFICAÇÃO FINAL: Confirma que cada caminho existe de verdade
+    const verified = allExtensions.filter(p => {
+        const exists = fs.existsSync(p);
+        if (!exists) console.error(`❌ [EXT-VERIFY] Caminho NÃO existe: ${p}`);
+        return exists;
+    });
+
+    console.log(`🔌 [EXT-RESULTADO] Total: ${verified.length} extensão(ões) verificada(s)`);
+    verified.forEach(p => console.log(`  ✅ ${p}`));
+
+    // 🛡️ WINDOWS: Cria junctions (symlinks) para caminhos com espaços
+    // Chrome no Windows pode falhar com --load-extension quando o caminho tem espaços
+    if (process.platform === 'win32') {
+        const os = require('os');
+        const tempBase = path.join(os.tmpdir(), 'nebula_extensions');
+        if (!fs.existsSync(tempBase)) fs.mkdirSync(tempBase, { recursive: true });
+
+        const finalPaths = verified.map((p, idx) => {
+            if (!p.includes(' ')) return p; // Caminho sem espaços -> OK
+
+            // Cria um junction sem espaços apontando para a extensão
+            const junctionName = `ext_${idx}_${path.basename(p).replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            const junctionPath = path.join(tempBase, junctionName);
+
+            try {
+                // Remove junction antiga se existir
+                if (fs.existsSync(junctionPath)) {
+                    try { fs.unlinkSync(junctionPath); } catch (e) {
+                        try { fs.rmSync(junctionPath, { recursive: true, force: true }); } catch (e2) { }
+                    }
+                }
+                // Cria junction (não precisa de admin no Windows)
+                fs.symlinkSync(p, junctionPath, 'junction');
+                console.log(`🔗 [JUNCTION] ${p} -> ${junctionPath}`);
+                return junctionPath;
+            } catch (e) {
+                console.warn(`⚠️ [JUNCTION] Falha ao criar junction: ${e.message}`);
+                return p; // fallback ao caminho original
+            }
+        });
+        return finalPaths;
+    }
+
+    return verified;
+}
+
+// 🔌 CAMINHO DAS EXTENSÕES DO USUÁRIO
+function getUserExtensionsPath() {
+    const userExtDir = path.join(app.getPath('userData'), 'user-extensions');
+    if (!fs.existsSync(userExtDir)) {
+        fs.mkdirSync(userExtDir, { recursive: true });
+    }
+    return userExtDir;
+}
+
+// 🔌 LER CONFIGURAÇÃO DE EXTENSÕES (ativado/desativado)
+function getExtensionsConfig() {
+    const configPath = path.join(getUserExtensionsPath(), 'extensions-config.json');
+    try {
+        if (fs.existsSync(configPath)) {
+            return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+    } catch (e) {
+        console.error('❌ Erro ao ler config de extensões:', e.message);
+    }
+    return {};
+}
+
+// 🔌 SALVAR CONFIGURAÇÃO DE EXTENSÕES
+function saveExtensionsConfig(config) {
+    const configPath = path.join(getUserExtensionsPath(), 'extensions-config.json');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+// 🔌 EXTRAIR METADADOS DE UMA EXTENSÃO (manifest.json)
+function getExtensionMeta(extDir, folderName, type) {
+    const manifestPath = path.join(extDir, 'manifest.json');
+    try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        // Tenta pegar o ícone da extensão
+        let iconPath = null;
+        if (manifest.icons) {
+            const sizes = ['128', '64', '48', '32', '16'];
+            for (const size of sizes) {
+                if (manifest.icons[size]) {
+                    const fullIconPath = path.join(extDir, manifest.icons[size]);
+                    if (fs.existsSync(fullIconPath)) {
+                        // Converte para base64 para enviar ao frontend
+                        const iconBuffer = fs.readFileSync(fullIconPath);
+                        const ext = path.extname(manifest.icons[size]).substring(1) || 'png';
+                        iconPath = `data:image/${ext};base64,${iconBuffer.toString('base64')}`;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const config = getExtensionsConfig();
+        const isEnabled = type === 'builtin' ? true : (config[folderName]?.enabled !== false);
+
+        return {
+            id: folderName,
+            name: manifest.name || folderName,
+            version: manifest.version || '1.0.0',
+            description: manifest.description || '',
+            icon: iconPath,
+            type: type, // 'builtin' ou 'user'
+            enabled: isEnabled,
+            manifestVersion: manifest.manifest_version || 2
+        };
+    } catch (e) {
+        return {
+            id: folderName,
+            name: folderName,
+            version: '?',
+            description: 'Erro ao ler manifest',
+            icon: null,
+            type: type,
+            enabled: false,
+            manifestVersion: 2
+        };
+    }
 }
 
 // 🍎🪟🐧 FUNÇÃO PARA ENCONTRAR O CHROME EM QUALQUER SISTEMA OPERACIONAL
@@ -361,6 +516,23 @@ function registerIPCHandlers() {
             prefs.password_manager.credentials_enable_service = false;
             prefs.password_manager.save_password_bubble_opt_in = false;
 
+            // 🧩 HABILITA DEVELOPER MODE para que --load-extension funcione
+            // Chrome moderno ignora silenciosamente extensões sem isso
+            if (profile.enableExtensions) {
+                if (!prefs.extensions) prefs.extensions = {};
+                if (!prefs.extensions.ui) prefs.extensions.ui = {};
+                prefs.extensions.ui.developer_mode = true;
+                console.log(`🧩 [PREFS] Developer Mode habilitado no perfil para extensões`);
+
+                // 🔐 DELETA Secure Preferences para impedir hash validation
+                // Chrome usa hashes em Secure Preferences para validar mudanças.
+                // Se não deletarmos, Chrome reverte nosso developer_mode.
+                const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+                if (fs.existsSync(securePrefsPath)) {
+                    try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para aceitar developer_mode`); } catch (e) { }
+                }
+            }
+
             fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
 
             // 🍎🪟🐧 Encontra o Chrome usando função multiplataforma
@@ -414,6 +586,7 @@ function registerIPCHandlers() {
                 'openai.com', 'chat.openai.com',  // OpenAI/ChatGPT - OAuth
                 'claude.ai', 'anthropic.com',     // Claude - OAuth
                 'midjourney.com',                 // Midjourney - Discord OAuth
+                'heygen.com', 'app.heygen.com',   // HeyGen - OAuth (Google/Apple/SSO/Email)
                 // 🔥 SITES COM PROTEÇÃO ANTI-BOT AVANÇADA (pulam pré-login)
                 'dankicode.com', 'cursos.dankicode.com',  // DankiCode - Anti-bot
             ];
@@ -948,46 +1121,189 @@ function registerIPCHandlers() {
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
                 '--disable-features=TranslateUI',
+                // 🔥 ANTI-DETECÇÃO: Impede sites de detectar automação Puppeteer
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
             ];
 
-            // 🔌 CARREGA EXTENSÕES EMBUTIDAS (se existirem)
-            const extensionsList = getExtensionsList();
-            if (extensionsList.length > 0) {
-                // Formato: --load-extension=path1,path2,path3
-                const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
-                chromeArgs.push(extensionsArg);
-                console.log(`🔌 [NATIVO] Carregando ${extensionsList.length} extensão(ões)`);
+            // 🧩 CARREGA EXTENSÕES SOMENTE SE O PERFIL TIVER enableExtensions ATIVADO
+            const shouldLoadExtensions = profile.enableExtensions === true;
+            let extensionsList = [];
+            if (shouldLoadExtensions) {
+                extensionsList = getExtensionsList();
+                if (extensionsList.length > 0) {
+                    // Caminhos já estão no formato curto (sem espaços) graças ao getExtensionsList()
+                    const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
+
+                    chromeArgs.push(extensionsArg);
+                    console.log(`🔌 [NATIVO] Preparando ${extensionsList.length} extensão(ões) para carregar`);
+                    console.log(`🧩 [DEBUG-RAW] extensionsArg: |${extensionsArg}|`);
+                }
             }
 
             if (proxyUrl) {
                 chromeArgs.push(`--proxy-server=${proxyUrl}`);
             }
 
-            // 🔒 SEMPRE usa modo --app para segurança (impede instalação de extensões)
-            if (targetUrls.length === 1) {
-                chromeArgs.push(`--app=${targetUrls[0]}`);
-            } else if (targetUrls.length > 1) {
-                chromeArgs.push(...targetUrls);
+            // 🔥 SMART URLs: Se tem cookies E a URL é de login, usa a URL base (dashboard)
+            const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso'];
+            let smartUrls = targetUrls.map(url => {
+                const hasProfileCookies = profile.cookies && profile.cookies.trim();
+                if (hasProfileCookies && loginPaths.some(lp => url.toLowerCase().includes(lp))) {
+                    try {
+                        const urlObj = new URL(url);
+                        const homeUrl = `${urlObj.protocol}//${urlObj.hostname}`;
+                        console.log(`🏠 [SMART-URL] Login detectado, redirecionando: ${url} → ${homeUrl}`);
+                        return homeUrl;
+                    } catch (e) { return url; }
+                }
+                return url;
+            });
+
+            // 🧩 Se tem extensões ativas, NÃO usa --app (mostra toolbar com ícones)
+            if (shouldLoadExtensions && extensionsList.length > 0) {
+                chromeArgs.push(...smartUrls);
+                console.log(`🧩 [NATIVO] Modo toolbar ativado (extensões visíveis)`);
+            } else if (smartUrls.length === 1) {
+                chromeArgs.push(`--app=${smartUrls[0]}`);
+            } else if (smartUrls.length > 1) {
+                chromeArgs.push(...smartUrls);
             }
 
-            console.log(`🚀 [NATIVO] Lançando Chrome via PUPPETEER (visível): ${executablePath}`);
+            let browser;
+            if (shouldLoadExtensions && extensionsList.length > 0) {
+                // 🚀 PUPPETEER.LAUNCH COM EXTENSÕES (método oficial)
+                // Usa ignoreDefaultArgs para impedir que o Puppeteer adicione --disable-extensions
+                const extPathsJoined = extensionsList.join(',');
+                console.log(`🚀 [NATIVO] Lançando via puppeteer.launch() COM suporte a extensões...`);
+                console.log(`🔌 [NATIVO] Extensões: ${extPathsJoined}`);
 
-            const browser = await puppeteer.launch({
-                executablePath,
-                headless: false,
-                userDataDir,
-                defaultViewport: null,
-                ignoreHTTPSErrors: true,
-                ignoreDefaultArgs: ['--enable-automation'],
-                args: [
-                    ...chromeArgs,
-                    '--disable-blink-features=AutomationControlled'
-                ]
-            });
+                browser = await puppeteer.launch({
+                    executablePath,
+                    headless: false,
+                    userDataDir,
+                    defaultViewport: null,
+                    ignoreHTTPSErrors: true,
+                    // 🔑 CRUCIAL: Remove bloqueios e flags que causam barra amarela
+                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
+                    args: [
+                        ...chromeArgs,
+                        `--disable-extensions-except=${extPathsJoined}`,
+                        '--enable-features=ExtensionsToolbarMenu',
+                    ]
+                });
+                console.log(`✅ [NATIVO] Chrome com extensões lançado com sucesso!`);
+
+                // 🔓 HABILITA DEVELOPER MODE via UI (Obrigatório para extensões CMD aparecerem)
+                try {
+                    console.log(`🔓 [NATIVO] Ativando Developer Mode via UI...`);
+                    const extPage = await browser.newPage();
+                    await extPage.goto('chrome://extensions', { waitUntil: 'load', timeout: 20000 });
+
+                    const result = await extPage.evaluate(async () => {
+                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                        for (let i = 0; i < 15; i++) {
+                            try {
+                                const manager = document.querySelector('extensions-manager');
+                                const toolbar = manager?.shadowRoot?.querySelector('extensions-toolbar');
+                                const toggle = toolbar?.shadowRoot?.querySelector('#devMode');
+
+                                if (toggle) {
+                                    if (!toggle.checked) {
+                                        toggle.click();
+                                        await sleep(1000);
+                                        return 'clicked';
+                                    }
+                                    return 'already_on';
+                                }
+                            } catch (e) { }
+                            await sleep(1000);
+                        }
+                        return 'timeout_no_elements';
+                    });
+
+                    console.log(`🔓 [NATIVO] Developer Mode Status: ${result}`);
+                    if (result === 'clicked') {
+                        await new Promise(r => setTimeout(r, 2000)); // Espera aplicar
+                    }
+                    await extPage.close();
+                } catch (extErr) {
+                    console.warn(`⚠️ [NATIVO] Falha na automação de extensões:`, extErr.message);
+                }
+            } else {
+                // Lançamento padrão via Puppeteer para perfis sem extensões
+                console.log(`🚀 [NATIVO] Lançando via Puppeteer padrão (sem extensões)`);
+                browser = await puppeteer.launch({
+                    executablePath,
+                    headless: false,
+                    userDataDir,
+                    defaultViewport: null,
+                    ignoreHTTPSErrors: true,
+                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection'],
+                    args: chromeArgs
+                });
+            }
+
 
             // Captura a página
             const pages = await browser.pages();
             const page = pages.length > 0 ? pages[0] : await browser.newPage();
+
+            // 🔥 ANTI-DETECÇÃO: Injeta scripts que escondem automação Puppeteer de TODOS os sites
+            await page.evaluateOnNewDocument(() => {
+                // Remove navigator.webdriver (principal flag de detecção)
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                delete navigator.__proto__.webdriver;
+
+                // Chrome API falsa (sites verificam isso)
+                if (!window.chrome) {
+                    window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) };
+                }
+
+                // Plugins falsos (sites verificam lista vazia)
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5].map(() => ({
+                        name: 'Chrome PDF Plugin',
+                        description: 'Portable Document Format',
+                        filename: 'internal-pdf-viewer',
+                        length: 1
+                    }))
+                });
+
+                // Languages reais
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['pt-BR', 'pt', 'en-US', 'en']
+                });
+
+                // Permissions API
+                const originalQuery = window.navigator.permissions?.query;
+                if (originalQuery) {
+                    window.navigator.permissions.query = (parameters) =>
+                        parameters.name === 'notifications'
+                            ? Promise.resolve({ state: Notification.permission })
+                            : originalQuery(parameters);
+                }
+            });
+            console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados na página principal`);
+
+            // 🔥 ANTI-DETECÇÃO: Aplica em novas abas também
+            browser.on('targetcreated', async (target) => {
+                if (target.type() === 'page') {
+                    try {
+                        const newPage = await target.page();
+                        if (newPage) {
+                            await newPage.evaluateOnNewDocument(() => {
+                                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                                delete navigator.__proto__.webdriver;
+                                if (!window.chrome) window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) };
+                            });
+                        }
+                    } catch (e) { }
+                }
+            });
 
             // 🍪 INJETAR COOKIES DO PERFIL (cadastrados no campo cookies do perfil)
             if (profile.cookies && profile.cookies.trim()) {
@@ -1095,19 +1411,149 @@ function registerIPCHandlers() {
                 }
             });
 
-            // 🍪 Se tem cookies do perfil, recarrega a página para aplicar
+            // 🍪 Se tem cookies do perfil, recarrega/redireciona para aplicar
             const hasCookies = profile.cookies && profile.cookies.trim();
             if (hasCookies && targetUrls.length > 0) {
-                console.log(`🔄 [COOKIES] Recarregando página para aplicar cookies...`);
                 // Aguarda a página carregar inicialmente
                 await new Promise(r => setTimeout(r, 2000));
-                // Recarrega para aplicar os cookies injetados
-                await page.reload({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { });
-                console.log(`✅ [COOKIES] Página recarregada com cookies aplicados!`);
+
+                // 🔥 DETECTA se a URL é uma página de login e redireciona para a home
+                const currentUrl = targetUrls[0].toLowerCase();
+                const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso'];
+                const isLoginPage = loginPaths.some(lp => currentUrl.includes(lp));
+
+                if (isLoginPage) {
+                    // Navega para a raiz do site (dashboard) em vez de recarregar a página de login
+                    try {
+                        const urlObj = new URL(targetUrls[0]);
+                        const homeUrl = `${urlObj.protocol}//${urlObj.hostname}`;
+                        console.log(`🏠 [COOKIES] URL de login detectada! Redirecionando para: ${homeUrl}`);
+                        await page.goto(homeUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+                        console.log(`✅ [COOKIES] Redirecionado para home com cookies aplicados!`);
+                    } catch (navErr) {
+                        console.warn(`⚠️ [COOKIES] Erro ao redirecionar, tentando reload:`, navErr.message);
+                        await page.reload({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { });
+                    }
+                } else {
+                    // URL normal: apenas recarrega para aplicar os cookies
+                    console.log(`🔄 [COOKIES] Recarregando página para aplicar cookies...`);
+                    await page.reload({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { });
+                    console.log(`✅ [COOKIES] Página recarregada com cookies aplicados!`);
+                }
             } else if (targetUrls.length > 0 && page.url() === 'about:blank') {
                 // Fallback: navega se estiver em branco
                 await page.goto(targetUrls[0], { waitUntil: 'networkidle2', timeout: 30000 })
                     .catch(e => console.error("Erro navegação:", e.message));
+            }
+
+            // 🔥 AUTO-DISMISS: Fecha modais de login que aparecem por cima do dashboard
+            // HeyGen e outros SPAs mostram modais de re-auth mesmo com sessão válida
+            const pageUrl = page.url().toLowerCase();
+            const sitesWithLoginModals = ['heygen.com', 'app.heygen.com'];
+            const hasLoginModal = sitesWithLoginModals.some(s => pageUrl.includes(s));
+
+            if (hasLoginModal) {
+                console.log(`🔥 [AUTO-DISMISS] Monitorando modais de login para fechar automaticamente...`);
+
+                // Injeta script que roda APÓS a página carregar e monitora modais
+                await page.evaluate(() => {
+                    // Função para fechar modais de login
+                    function dismissLoginModal() {
+                        // Procura por overlays/backdrops de modal
+                        const overlays = document.querySelectorAll(
+                            '[class*="overlay"], [class*="backdrop"], [class*="modal-bg"], ' +
+                            '[class*="dialog-overlay"], [class*="mask"], [role="dialog"], ' +
+                            '[class*="ReactModal"], [class*="ant-modal"], [class*="MuiDialog"], ' +
+                            '[class*="chakra-modal"]'
+                        );
+
+                        for (const overlay of overlays) {
+                            const text = overlay.textContent || '';
+                            // Detecta se é um modal de login OAuth
+                            if ((text.includes('Continue with Google') || text.includes('Continue with Apple') ||
+                                text.includes('Continue with SSO') || text.includes('Continue with email') ||
+                                text.includes('Sign in') || text.includes('Log in')) &&
+                                (text.includes('Google') && text.includes('Apple'))) {
+
+                                console.log('🔥 [AUTO-DISMISS] Modal de login detectado! Fechando...');
+
+                                // Tenta encontrar botão de fechar (X)
+                                const closeBtn = overlay.querySelector(
+                                    'button[aria-label="close"], button[aria-label="Close"], ' +
+                                    '[class*="close"], [class*="dismiss"], .close-button, ' +
+                                    'button:has(svg path[d*="M6"]), button:has(svg path[d*="M19"])'
+                                );
+                                if (closeBtn) {
+                                    closeBtn.click();
+                                    console.log('✅ [AUTO-DISMISS] Fechado via botão close!');
+                                    return true;
+                                }
+
+                                // Tenta clicar no backdrop (área escura atrás do modal)
+                                const backdrop = overlay.querySelector('[class*="backdrop"], [class*="overlay-bg"]');
+                                if (backdrop) {
+                                    backdrop.click();
+                                    console.log('✅ [AUTO-DISMISS] Fechado via backdrop click!');
+                                    return true;
+                                }
+
+                                // Último recurso: esconde o modal via CSS
+                                overlay.style.display = 'none';
+                                overlay.style.visibility = 'hidden';
+                                overlay.style.opacity = '0';
+                                overlay.style.pointerEvents = 'none';
+                                // Também remove possíveis overlays/scroll locks do body
+                                document.body.style.overflow = 'auto';
+                                document.body.classList.remove('overflow-hidden', 'modal-open', 'no-scroll');
+                                console.log('✅ [AUTO-DISMISS] Modal escondido via CSS!');
+                                return true;
+                            }
+                        }
+
+                        // Fallback: procura qualquer elemento fixo/absolute com texto de login
+                        const allElements = document.querySelectorAll('div[style*="position: fixed"], div[style*="position:fixed"], div[style*="z-index"]');
+                        for (const el of allElements) {
+                            const text = el.textContent || '';
+                            if (text.includes('Continue with Google') && text.includes('Continue with Apple') && el.offsetHeight > 200) {
+                                el.style.display = 'none';
+                                document.body.style.overflow = 'auto';
+                                console.log('✅ [AUTO-DISMISS] Modal fixo escondido!');
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    // Executa múltiplas vezes para pegar modais que aparecem com delay
+                    let attempts = 0;
+                    const maxAttempts = 30; // 30 tentativas x 1s = 30 segundos de monitoramento
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        if (dismissLoginModal() || attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+                        }
+                    }, 1000);
+
+                    // Também usa MutationObserver para detecção instantânea
+                    const observer = new MutationObserver((mutations) => {
+                        for (const mutation of mutations) {
+                            for (const node of mutation.addedNodes) {
+                                if (node.nodeType === 1 && node.textContent &&
+                                    node.textContent.includes('Continue with Google') &&
+                                    node.textContent.includes('Continue with Apple')) {
+                                    setTimeout(dismissLoginModal, 500); // Pequeno delay para o modal renderizar completamente
+                                }
+                            }
+                        }
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+
+                    // Para o observer após 60 segundos
+                    setTimeout(() => observer.disconnect(), 60000);
+                });
+
+                console.log(`✅ [AUTO-DISMISS] Script de monitoramento injetado!`);
             }
 
             // Armazena instâncias para controle
@@ -1116,7 +1562,11 @@ function registerIPCHandlers() {
             // 🔥 CRIA JANELA OVERLAY COM BOTÕES FLUTUANTES
             createFloatingButtons(profile.id);
 
-            return { status: 'success', mode: 'native', pid: browser.process().pid };
+            // Pega o PID de forma segura (connect não tem process())
+            const bProc = browser.process();
+            const browserPid = bProc ? bProc.pid : 0;
+
+            return { status: 'success', mode: 'native', pid: browserPid };
         } catch (e) {
             console.error("Erro ao iniciar perfil nativo:", e);
             return { status: 'error', message: e.message };
@@ -1147,6 +1597,20 @@ function registerIPCHandlers() {
             if (!prefs.password_manager) prefs.password_manager = {};
             prefs.password_manager.credentials_enable_service = false;
             prefs.password_manager.save_password_bubble_opt_in = false;
+
+            // 🧩 HABILITA DEVELOPER MODE para que --load-extension funcione
+            if (profile.enableExtensions) {
+                if (!prefs.extensions) prefs.extensions = {};
+                if (!prefs.extensions.ui) prefs.extensions.ui = {};
+                prefs.extensions.ui.developer_mode = true;
+                console.log(`🧩 [PREFS] Developer Mode habilitado no perfil para extensões`);
+
+                // 🔐 DELETA Secure Preferences para impedir hash validation
+                const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+                if (fs.existsSync(securePrefsPath)) {
+                    try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para aceitar developer_mode`); } catch (e) { }
+                }
+            }
 
             fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
 
@@ -1199,42 +1663,127 @@ function registerIPCHandlers() {
                 '--disable-popup-blocking',
                 '--disable-translate',
                 '--disable-dev-tools', // 🔒 Proteção F12
+                // 🔥 ANTI-DETECÇÃO: Impede sites de detectar automação Puppeteer
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
                 // Proxy se configurado
                 proxyUrl ? `--proxy-server=${proxyUrl}` : ''
             ].filter(Boolean);
 
-            // 🔌 CARREGA EXTENSÕES EMBUTIDAS (se existirem)
-            const extensionsList = getExtensionsList();
-            if (extensionsList.length > 0) {
-                const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
-                launchArgs.push(extensionsArg);
-                console.log(`🔌 [PUPPETEER] Carregando ${extensionsList.length} extensão(ões)`);
+            // 🧩 CARREGA EXTENSÕES SOMENTE SE O PERFIL TIVER enableExtensions ATIVADO
+            const shouldLoadExtensions = profile.enableExtensions === true;
+            let extensionsList = [];
+            if (shouldLoadExtensions) {
+                extensionsList = getExtensionsList();
+                if (extensionsList.length > 0) {
+                    // Caminhos já estão no formato curto (sem espaços) graças ao getExtensionsList()
+                    const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
+
+                    launchArgs.push(extensionsArg);
+                    console.log(`🔌 [PUPPETEER] Preparando ${extensionsList.length} extensão(ões) para carregar`);
+                    console.log(`🧩 [DEBUG-RAW] extensionsArg: |${extensionsArg}|`);
+                }
             }
 
-            // IMPORTANTE: Se houver mais de uma aba, NÃO usamos --app. 
-            // O modo APP esconde a barra de abas do Chrome, impedindo o usuário de ver as outras páginas.
-            if (targetUrls.length === 1) {
+            // 🧩 Se tem extensões ativas, NÃO usa --app (mostra toolbar com ícones)
+            if (shouldLoadExtensions && extensionsList.length > 0) {
+                if (targetUrls.length > 0) {
+                    launchArgs.push(...targetUrls);
+                }
+                console.log(`🧩 [PUPPETEER] Modo toolbar ativado (extensões visíveis)`);
+            } else if (targetUrls.length === 1) {
                 launchArgs.push(`--app=${targetUrls[0]}`);
             }
 
-            const browser = await puppeteer.launch({
-                executablePath,
-                headless: false,
-                userDataDir,
-                defaultViewport: null,
-                ignoreHTTPSErrors: true,
-                // Remove apenas a flag que mostra "Chrome está sendo controlado"
-                ignoreDefaultArgs: ['--enable-automation'],
-                args: [
-                    ...launchArgs,
-                    // Esconde a detecção de automação
-                    '--disable-blink-features=AutomationControlled'
-                ]
-            });
+            let browser;
+            if (shouldLoadExtensions && extensionsList.length > 0) {
+                // 🚀 ABORDAGEM PUPPETEER.LAUNCH COM EXTENSÕES (Melhorada)
+                const extPathsJoined = extensionsList.join(',');
+                console.log(`🚀 [PUPPETEER] Lançando via puppeteer.launch() COM suporte a extensões...`);
+                console.log(`🔌 [PUPPETEER] Extensões: ${extPathsJoined}`);
+
+                browser = await puppeteer.launch({
+                    executablePath,
+                    headless: false,
+                    userDataDir,
+                    defaultViewport: null,
+                    ignoreHTTPSErrors: true,
+                    // 🔑 CRUCIAL: Remove bloqueios e flags que causam barra amarela
+                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
+                    args: [
+                        ...launchArgs,
+                        `--disable-extensions-except=${extPathsJoined}`,
+                        '--enable-features=ExtensionsToolbarMenu'
+                    ]
+                });
+                console.log(`✅ [PUPPETEER] Chrome com extensões lançado com sucesso!`);
+
+                // 🔓 HABILITA DEVELOPER MODE via UI (Opcional mas recomendado para unpacked)
+                try {
+                    console.log(`🔓 [PUPPETEER] Ativando Developer Mode via UI...`);
+                    const extPage = await browser.newPage();
+                    await extPage.goto('chrome://extensions', { waitUntil: 'load', timeout: 20000 });
+
+                    const result = await extPage.evaluate(async () => {
+                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                        for (let i = 0; i < 15; i++) {
+                            try {
+                                const manager = document.querySelector('extensions-manager');
+                                const toolbar = manager?.shadowRoot?.querySelector('extensions-toolbar');
+                                const toggle = toolbar?.shadowRoot?.querySelector('#devMode');
+                                if (toggle) {
+                                    if (!toggle.checked) {
+                                        toggle.click();
+                                        await sleep(1000);
+                                        return 'clicked';
+                                    }
+                                    return 'already_on';
+                                }
+                            } catch (e) { }
+                            await sleep(1000);
+                        }
+                        return 'timeout_no_elements';
+                    });
+
+                    console.log(`🔓 [PUPPETEER] Status: ${result}`);
+                    if (result === 'clicked') await new Promise(r => setTimeout(r, 2000));
+                    await extPage.close();
+                } catch (extErr) {
+                    console.warn(`⚠️ [PUPPETEER] Falha na ativação via UI:`, extErr.message);
+                }
+
+            } else {
+                // Lançamento padrão via Puppeteer para perfis sem extensões
+                console.log(`🚀 [PUPPETEER] Lançando via Puppeteer padrão (sem extensões)`);
+                browser = await puppeteer.launch({
+                    executablePath,
+                    headless: false,
+                    userDataDir,
+                    defaultViewport: null,
+                    ignoreHTTPSErrors: true,
+                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection'],
+                    args: launchArgs
+                });
+            }
 
             // Captura as páginas iniciais
             const pages = await browser.pages();
             const page = pages.length > 0 ? pages[0] : await browser.newPage();
+
+            // 🔥 ANTI-DETECÇÃO: Injeta scripts que escondem automação Puppeteer
+            await page.evaluateOnNewDocument(() => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                delete navigator.__proto__.webdriver;
+                if (!window.chrome) window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) };
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5].map(() => ({ name: 'Chrome PDF Plugin', description: 'Portable Document Format', filename: 'internal-pdf-viewer', length: 1 }))
+                });
+                Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+            });
+            console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados (modo Puppeteer)`);
 
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
             await injectProtection(page);
@@ -1949,6 +2498,181 @@ function registerIPCHandlers() {
             }
         } catch (err) {
             console.error(`❌ [OVERLAY] Erro na ação ${action}:`, err.message);
+        }
+    });
+
+    // ========== 🧩 SISTEMA DE GERENCIAMENTO DE EXTENSÕES ==========
+
+    // 📋 LISTAR TODAS AS EXTENSÕES INSTALADAS (embutidas + do usuário)
+    ipcMain.handle('get-installed-extensions', async () => {
+        try {
+            const extensions = [];
+
+            // 1. Extensões embutidas
+            const builtinDir = getExtensionsPath();
+            if (builtinDir) {
+                const subdirs = fs.readdirSync(builtinDir);
+                for (const subdir of subdirs) {
+                    const extFullPath = path.join(builtinDir, subdir);
+                    const manifestPath = path.join(extFullPath, 'manifest.json');
+                    if (fs.statSync(extFullPath).isDirectory() && fs.existsSync(manifestPath)) {
+                        extensions.push(getExtensionMeta(extFullPath, subdir, 'builtin'));
+                    }
+                }
+            }
+
+            // 2. Extensões do usuário
+            const userExtDir = getUserExtensionsPath();
+            const subdirs = fs.readdirSync(userExtDir);
+            for (const subdir of subdirs) {
+                if (subdir === 'extensions-config.json') continue;
+                const extFullPath = path.join(userExtDir, subdir);
+                const manifestPath = path.join(extFullPath, 'manifest.json');
+                if (fs.statSync(extFullPath).isDirectory() && fs.existsSync(manifestPath)) {
+                    extensions.push(getExtensionMeta(extFullPath, subdir, 'user'));
+                }
+            }
+
+            console.log(`🧩 [EXTENSÕES] Total listadas: ${extensions.length}`);
+            return { status: 'success', extensions };
+        } catch (err) {
+            console.error('❌ [EXTENSÕES] Erro ao listar:', err.message);
+            return { status: 'error', message: err.message, extensions: [] };
+        }
+    });
+
+    // 📦 INSTALAR EXTENSÃO (abre dialog para selecionar .zip ou .crx)
+    ipcMain.handle('install-extension', async () => {
+        try {
+            // Abre o dialog para selecionar arquivo
+            const result = await dialog.showOpenDialog(mainWindow, {
+                title: 'Selecionar Extensão do Chrome',
+                filters: [
+                    { name: 'Extensões Chrome', extensions: ['zip', 'crx'] },
+                    { name: 'Todos os arquivos', extensions: ['*'] }
+                ],
+                properties: ['openFile']
+            });
+
+            if (result.canceled || !result.filePaths[0]) {
+                return { status: 'cancelled' };
+            }
+
+            const filePath = result.filePaths[0];
+            const fileName = path.basename(filePath);
+            console.log(`📦 [EXTENSÕES] Instalando: ${fileName}`);
+
+            const userExtDir = getUserExtensionsPath();
+
+            // Descompacta o arquivo
+            const zip = new AdmZip(filePath);
+            const entries = zip.getEntries();
+
+            // Detecta se o manifest.json está na raiz ou dentro de uma subpasta
+            let manifestEntry = entries.find(e => e.entryName === 'manifest.json');
+            let rootPrefix = '';
+
+            if (!manifestEntry) {
+                // Procura manifest.json dentro de uma subpasta (ex: extension-folder/manifest.json)
+                manifestEntry = entries.find(e => e.entryName.endsWith('/manifest.json') && e.entryName.split('/').length === 2);
+                if (manifestEntry) {
+                    rootPrefix = manifestEntry.entryName.replace('manifest.json', '');
+                }
+            }
+
+            if (!manifestEntry) {
+                return { status: 'error', message: 'Arquivo inválido! Não contém manifest.json' };
+            }
+
+            // Lê o manifest para extrair o nome
+            const manifestContent = JSON.parse(manifestEntry.getData().toString('utf8'));
+            const extName = (manifestContent.name || fileName.replace(/\.(zip|crx)$/i, ''))
+                .replace(/[^a-zA-Z0-9_\-\s]/g, '')
+                .trim()
+                .replace(/\s+/g, '-');
+
+            const targetDir = path.join(userExtDir, extName);
+
+            // Se já existe, remove antes de reinstalar
+            if (fs.existsSync(targetDir)) {
+                fs.rmSync(targetDir, { recursive: true, force: true });
+            }
+
+            fs.mkdirSync(targetDir, { recursive: true });
+
+            // Extrai os arquivos
+            if (rootPrefix) {
+                // Arquivos estão dentro de subpasta, extrai com ajuste de caminho
+                for (const entry of entries) {
+                    if (entry.isDirectory) continue;
+                    if (!entry.entryName.startsWith(rootPrefix)) continue;
+                    const relativePath = entry.entryName.substring(rootPrefix.length);
+                    const destPath = path.join(targetDir, relativePath);
+                    const destDir = path.dirname(destPath);
+                    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+                    fs.writeFileSync(destPath, entry.getData());
+                }
+            } else {
+                // Tudo na raiz, extrai direto
+                zip.extractAllTo(targetDir, true);
+            }
+
+            // Ativa a extensão por padrão
+            const config = getExtensionsConfig();
+            config[extName] = { enabled: true, installedAt: Date.now() };
+            saveExtensionsConfig(config);
+
+            const meta = getExtensionMeta(targetDir, extName, 'user');
+            console.log(`✅ [EXTENSÕES] Instalada com sucesso: ${meta.name} v${meta.version}`);
+
+            return { status: 'success', extension: meta };
+        } catch (err) {
+            console.error('❌ [EXTENSÕES] Erro ao instalar:', err.message);
+            return { status: 'error', message: err.message };
+        }
+    });
+
+    // 🗑️ REMOVER EXTENSÃO DO USUÁRIO
+    ipcMain.handle('remove-extension', async (event, extensionId) => {
+        try {
+            const userExtDir = getUserExtensionsPath();
+            const extPath = path.join(userExtDir, extensionId);
+
+            if (!fs.existsSync(extPath)) {
+                return { status: 'error', message: 'Extensão não encontrada' };
+            }
+
+            // Remove o diretório
+            fs.rmSync(extPath, { recursive: true, force: true });
+
+            // Remove do config
+            const config = getExtensionsConfig();
+            delete config[extensionId];
+            saveExtensionsConfig(config);
+
+            console.log(`🗑️ [EXTENSÕES] Removida: ${extensionId}`);
+            return { status: 'success' };
+        } catch (err) {
+            console.error('❌ [EXTENSÕES] Erro ao remover:', err.message);
+            return { status: 'error', message: err.message };
+        }
+    });
+
+    // 🔄 ATIVAR/DESATIVAR EXTENSÃO
+    ipcMain.handle('toggle-extension', async (event, extensionId, enabled) => {
+        try {
+            const config = getExtensionsConfig();
+            if (!config[extensionId]) {
+                config[extensionId] = {};
+            }
+            config[extensionId].enabled = enabled;
+            saveExtensionsConfig(config);
+
+            console.log(`🔄 [EXTENSÕES] ${extensionId}: ${enabled ? 'ATIVADA' : 'DESATIVADA'}`);
+            return { status: 'success', enabled };
+        } catch (err) {
+            console.error('❌ [EXTENSÕES] Erro ao alternar:', err.message);
+            return { status: 'error', message: err.message };
         }
     });
 }

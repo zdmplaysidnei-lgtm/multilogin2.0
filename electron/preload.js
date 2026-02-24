@@ -14,5 +14,10 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   captureSession: (profileId, targetUrl) => ipcRenderer.invoke('capture-session', { profileId, targetUrl }),
   injectSession: (profileId, sessionData, targetUrl) => ipcRenderer.invoke('inject-session', { profileId, sessionData, targetUrl }),
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_event, value) => callback(value)),
-  platform: process.platform
+  platform: process.platform,
+  // 🧩 Sistema de Extensões
+  getInstalledExtensions: () => ipcRenderer.invoke('get-installed-extensions'),
+  installExtension: () => ipcRenderer.invoke('install-extension'),
+  removeExtension: (extensionId) => ipcRenderer.invoke('remove-extension', extensionId),
+  toggleExtension: (extensionId, enabled) => ipcRenderer.invoke('toggle-extension', extensionId, enabled),
 });

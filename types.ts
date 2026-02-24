@@ -16,6 +16,7 @@ export interface User {
   blocked?: boolean;
   supportUrl?: string;
   customLogoUrl?: string;
+  tutorialLink?: string;
   isLoggedIn?: boolean;
   favorites?: string[];
   expirationDate?: number;
@@ -59,6 +60,7 @@ export interface Profile {
   fingerprint: FingerprintConfig;
   localStorage?: string;
   customExtensionPath?: string;
+  enableExtensions?: boolean; // 🧩 Ativa extensões neste perfil (mostra toolbar com ícones)
   videoTutorial?: string;
 }
 

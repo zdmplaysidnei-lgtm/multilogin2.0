@@ -1,11 +1,11 @@
 
 import { AppSettings, Profile, Role, User, FingerprintConfig } from './types';
 
-export const API_BASE_URL = "https://api.karaokeraf.com"; 
-export const VPS_API_KEY = "SIDNEI_PRO_TOKEN_2025_SECURE"; 
+export const API_BASE_URL = "https://api.karaokeraf.com";
+export const VPS_API_KEY = "SIDNEI_PRO_TOKEN_2025_SECURE";
 
 export const ADMIN_SUPPORT_LINK = "https://t.me/+nNeDGqzMiUo5MWFh";
-export const HOTMART_CHECKOUT_URL = "https://sso.hotmart.com/login?service=https%3A%2F%2Fsso.hotmart.com%2Foauth2.0%2FcallbackAuthorize%3Fclient_id%3D0fff6c2a-971c-4f7a-b0b3-3032b7a26319%26scope%3Dopenid%2Bprofile%2Bauthorities%2Bemail%2Buser%26redirect_uri%3Dhttps%253A%252F%252Fconsumer.hotmart.com%252Fauth%252Flogin%26response_type%3Dcode%26response_mode%3Dquery%26state%3Dad7880cd44ce459bbfff5983d1c5565b%26client_name%3DCasOAuthClient"; 
+export const HOTMART_CHECKOUT_URL = "https://sso.hotmart.com/login?service=https%3A%2F%2Fsso.hotmart.com%2Foauth2.0%2FcallbackAuthorize%3Fclient_id%3D0fff6c2a-971c-4f7a-b0b3-3032b7a26319%26scope%3Dopenid%2Bprofile%2Bauthorities%2Bemail%2Buser%26redirect_uri%3Dhttps%253A%252F%252Fconsumer.hotmart.com%252Fauth%252Flogin%26response_type%3Dcode%26response_mode%3Dquery%26state%3Dad7880cd44ce459bbfff5983d1c5565b%26client_name%3DCasOAuthClient";
 
 const defaultFingerprint: FingerprintConfig = {
   maskFingerprint: true, spoofUserAgent: true, isolateCookies: true, spoofTimezone: true,
@@ -29,24 +29,24 @@ export const INITIAL_SETTINGS: AppSettings = {
   seasonalEffect: 'nebula',
   defaultMemberPassword: 'membro123',
   tutorialLink: 'https://youtube.com',
-  blockedUrls: [], 
+  blockedUrls: [],
   categories: [
-    "INTELIGÊNCIAS ARTIFICIAIS", "IAS ESTILO CHATGPT", "IMAGEMS", "VÍDEOS", 
-    "GERADORES DE ÁUDIO", "CURSOS", "LIP SYNC", "OUTROS", "FERRAMENTAS DE SEO", 
+    "INTELIGÊNCIAS ARTIFICIAIS", "IAS ESTILO CHATGPT", "IMAGEMS", "VÍDEOS",
+    "GERADORES DE ÁUDIO", "CURSOS", "LIP SYNC", "OUTROS", "FERRAMENTAS DE SEO",
     "MINERAÇÃO DE PRODUTOS", "FÓRUMS", "PACK TOOLS", "IMAGENS E VÍDEO"
   ],
   popup: {
     enabled: false,
     type: 'text',
     contentUrl: '',
-    textContent: 'Bem-vindo ao Sidnei - Ferramentas Ilimitadas!',
+    textContent: 'Bem-vindo ao Rateioflix - Ferramentas Premium!',
     size: 'md',
     actionUrl: '',
     actionText: 'Saiba Mais',
     textStyle: {
       fontFamily: 'Inter',
-      gradientFrom: '#a855f7',
-      gradientTo: '#ec4899',
+      gradientFrom: '#ef4444',
+      gradientTo: '#f43f5e',
       gradientDirection: 'to right',
       fontSize: 2,
       textAlign: 'center'
@@ -60,7 +60,7 @@ export const MOCK_USERS: User[] = [
 
 export const MOCK_PROFILES: Profile[] = [
   {
-    id: 'p1', name: 'Netflix Premium', status: 'active', 
+    id: 'p1', name: 'Netflix Premium', status: 'active',
     coverImage: 'https://images.ctfassets.net/4cd45et68cgf/4nBn7n6vL99yC9f76UMp6O/93b2161358f2d591605342a843e990c7/Netflix-Symbol.png',
     urls: ['https://netflix.com'], launchMode: 'external', loginType: 'cookies', isFavorite: true, createdAt: Date.now(),
     fingerprint: defaultFingerprint, orderIndex: 0

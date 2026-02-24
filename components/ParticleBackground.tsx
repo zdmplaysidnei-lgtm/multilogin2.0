@@ -1,4 +1,4 @@
-
+﻿
 import React, { useEffect, useRef } from 'react';
 import { SeasonalEffectType } from '../types';
 
@@ -95,7 +95,7 @@ const ParticleBackground: React.FC<ParticleBackgroundProps> = ({ effect = 'nebul
         this.speedY = Math.random() * 0.5 + 0.2;
         this.speedX = (Math.random() - 0.5) * 0.2;
         this.opacity = Math.random() * 0.5 + 0.1;
-        const colors = ['#ff8800', '#ffaa00', '#ffcc00', '#ff6600', '#a855f7'];
+        const colors = ['#ff8800', '#ffaa00', '#ffcc00', '#ff6600', '#E50914'];
         this.color = colors[Math.floor(Math.random() * colors.length)];
       }
 

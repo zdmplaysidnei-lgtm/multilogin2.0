@@ -11,6 +11,56 @@ const prepareForSupabase = (obj: any) => {
 };
 
 // ============================================
+// CACHE DE COLUNAS VÁLIDAS DO SUPABASE
+// Detecta automaticamente quais colunas existem
+// ============================================
+let knownUserColumns: string[] | null = null;
+
+const detectUserColumns = async (): Promise<string[]> => {
+  if (knownUserColumns) return knownUserColumns;
+
+  try {
+    const { data, error } = await supabase.from('users').select('*').limit(1);
+    if (!error && data && data.length > 0) {
+      knownUserColumns = Object.keys(data[0]);
+      console.log('📋 Colunas detectadas na tabela users:', knownUserColumns.join(', '));
+    } else {
+      // Fallback: colunas mínimas que sabemos existir
+      knownUserColumns = ['id', 'email', 'password', 'role', 'ownerId'];
+      console.warn('⚠️ Usando colunas padrão (tabela vazia ou erro)');
+    }
+  } catch {
+    knownUserColumns = ['id', 'email', 'password', 'role', 'ownerId'];
+  }
+
+  return knownUserColumns;
+};
+
+const prepareUserForSupabase = async (user: any): Promise<any> => {
+  const columns = await detectUserColumns();
+  const prepared = prepareForSupabase(user);
+
+  // Separar campos conhecidos e extras
+  const filtered: any = {};
+  const extras: any = {};
+
+  for (const [key, value] of Object.entries(prepared)) {
+    if (columns.includes(key)) {
+      filtered[key] = value;
+    } else {
+      extras[key] = value;
+    }
+  }
+
+  // Se existe coluna 'metadata', guardar extras lá
+  if (columns.includes('metadata')) {
+    filtered.metadata = { ...extras };
+  }
+
+  return filtered;
+};
+
+// ============================================
 // CACHE EM MEMÓRIA COM TTL
 // ============================================
 let memoryCache = {
@@ -234,7 +284,7 @@ export const DataService = {
       const BATCH_SIZE = 5;
       for (let i = 0; i < users.length; i += BATCH_SIZE) {
         const batch = users.slice(i, i + BATCH_SIZE);
-        const sanitized = batch.map(u => prepareForSupabase(u));
+        const sanitized = await Promise.all(batch.map(u => prepareUserForSupabase(u)));
 
         const { error } = await supabase
           .from('users')
@@ -274,7 +324,7 @@ export const DataService = {
 
       const { error } = await supabase
         .from('users')
-        .upsert(prepareForSupabase(user), { onConflict: 'id' });
+        .upsert(await prepareUserForSupabase(user), { onConflict: 'id' });
 
       if (error) {
         console.error('❌ Erro Supabase:', error.message);

@@ -1,4 +1,4 @@
-
+﻿
 import React, { useEffect, useState } from 'react';
 import { CheckCircle, AlertCircle, X, Star, Info } from 'lucide-react';
 
@@ -39,8 +39,8 @@ export const Toast: React.FC<ToastProps> = ({ title, message, type, onClose }) =
 
   const config = {
     success: { icon: CheckCircle, color: 'text-green-400', bg: 'bg-green-900/90 border-green-500/50', bar: 'bg-green-500' },
-    error: { icon: AlertCircle, color: 'text-red-400', bg: 'bg-red-900/90 border-red-500/50', bar: 'bg-red-500' },
-    info: { icon: Info, color: 'text-purple-400', bg: 'bg-purple-900/90 border-purple-500/50', bar: 'bg-purple-500' }
+    error: { icon: AlertCircle, color: 'text-[#FF6B6B]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' },
+    info: { icon: Info, color: 'text-[#FF6B6B]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' }
   }[type];
 
   return (
