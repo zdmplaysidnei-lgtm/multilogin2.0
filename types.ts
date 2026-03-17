@@ -82,12 +82,15 @@ export interface PopupConfig {
   actionUrl?: string;
   actionText?: string;
   textStyle: TextStyle;
+  targetAudience?: 'all' | 'admin' | 'resellers' | 'members' | 'admin_members' | 'reseller_members';
 }
 
 export type SeasonalEffectType =
   | 'nebula' | 'snow' | 'rain' | 'leaves' | 'fireworks'
   | 'halloween' | 'valentine' | 'easter' | 'summer'
-  | 'matrix' | 'junina' | 'mothersday' | 'christmas';
+  | 'matrix' | 'junina' | 'mothersday' | 'christmas'
+  | 'carnival' | 'stpatricks' | 'aurora' | 'spring'
+  | 'sakura' | 'ocean' | 'galaxy' | 'neon' | 'prosperity';
 
 export interface AppSettings {
   logoUrl: string;

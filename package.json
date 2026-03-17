@@ -1,13 +1,13 @@
 {
   "name": "rateioflix-ferramentas",
-  "productName": "Rateioflix - Ferramentas Premium",
-  "version": "1.0.0",
+  "productName": "Sidnei - Ferramentas Ilimitadas",
+  "version": "2.0.0",
   "private": true,
   "main": "./electron/main.js",
   "homepage": "./",
   "description": "Sistema de multilogin avançado estilo Netflix",
   "author": {
-    "name": "Rateioflix Inc",
+    "name": "Sidnei",
     "email": "rateioflix@example.com"
   },
   "dependencies": {
@@ -48,8 +48,8 @@
     "dist:linux": "npm run build && electron-builder --linux --x64"
   },
   "build": {
-    "appId": "com.rateioflix.ferramentas",
-    "productName": "Rateioflix - Ferramentas Premium",
+    "appId": "com.sidnei.ferramentas",
+    "productName": "Sidnei - Ferramentas Ilimitadas",
     "asar": true,
     "asarUnpack": [
       "**/*.dll",

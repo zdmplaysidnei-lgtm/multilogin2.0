@@ -39,8 +39,8 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`group flex flex-col bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-[#E50914]/50 transition-all duration-300 hover:shadow-[0_0_30px_rgba(229,9,20,0.15)] h-[340px] relative
-        ${isDragging ? 'opacity-20 scale-95 border-dashed border-[#E50914]' : 'opacity-100'} 
+      className={`group flex flex-col bg-[#1a1a1a] rounded-xl overflow-hidden border border-gray-800 hover:border-[#8B5CF6]/50 transition-all duration-300 hover:shadow-[0_0_30px_rgba(139,92,246,0.15)] h-[340px] relative
+        ${isDragging ? 'opacity-20 scale-95 border-dashed border-[#8B5CF6]' : 'opacity-100'} 
         ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
 
@@ -73,7 +73,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
         {/* Título */}
         <div className="mb-3">
-          <h3 className="font-bold text-base text-gray-100 truncate group-hover:text-[#FF6B6B] transition-colors" title={profile.name}>
+          <h3 className="font-bold text-base text-gray-100 truncate group-hover:text-[#C4B5FD] transition-colors" title={profile.name}>
             {profile.name}
           </h3>
           {profile.orderIndex !== undefined && (
@@ -83,8 +83,8 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
         {/* Status & Instruções (Mesma linha) */}
         <div className="flex items-center justify-between mb-4">
-          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border flex items-center gap-1 ${isMaintenance ? 'bg-[#E50914]/20 text-[#FF6B6B] border-red-900/30' : 'bg-green-900/20 text-green-400 border-green-500/30'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isMaintenance ? 'bg-[#E50914]' : 'bg-green-500 animate-pulse'}`}></span>
+          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border flex items-center gap-1 ${isMaintenance ? 'bg-[#8B5CF6]/20 text-[#C4B5FD] border-purple-900/30' : 'bg-green-900/20 text-green-400 border-green-500/30'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isMaintenance ? 'bg-[#8B5CF6]' : 'bg-green-500 animate-pulse'}`}></span>
             {isMaintenance ? 'Manutenção' : 'Ativo'}
           </span>
 
@@ -102,17 +102,23 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
           )}
         </div>
 
-        {/* Botão INICIAR */}
+        {/* Botão INICIAR — Estilo pill roxo com borda interna fina e efeitos de glow */}
         <button
           onClick={() => onOpen(profile)}
           disabled={isMaintenance}
-          className={`w-full py-2.5 rounded-lg font-bold text-sm tracking-wider flex items-center justify-center gap-2 transition-all duration-300 shadow-lg transform active:scale-95 group/btn mb-3
+          className={`relative w-full py-3 rounded-full font-bold text-sm tracking-wider flex items-center justify-center gap-2 transition-all duration-300 transform active:scale-95 group/btn mb-3 overflow-hidden
             ${isMaintenance
               ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'
-              : 'bg-gradient-to-r from-[#E50914] via-[#f40612] to-[#E50914] bg-[length:200%_auto] hover:bg-right text-white shadow-[#E50914]/30 hover:shadow-[#E50914]/40 border border-white/10'
+              : 'bg-gradient-to-r from-[#7C3AED] via-[#8B5CF6] to-[#6D28D9] text-white shadow-[0_0_25px_rgba(139,92,246,0.5)] hover:shadow-[0_0_40px_rgba(139,92,246,0.7)] hover:scale-[1.03] hover:brightness-110'
             }`}
         >
-          {isMaintenance ? 'Indisponível' : <><Rocket className="w-4 h-4" /> INICIAR</>}
+          {/* Borda interna fina com efeito de glow ao hover */}
+          {!isMaintenance && (
+            <span className="absolute inset-[2px] rounded-full border border-white/30 transition-all duration-300 group-hover/btn:border-white/60 group-hover/btn:shadow-[inset_0_0_12px_rgba(255,255,255,0.2)]" />
+          )}
+          <span className="relative z-10 flex items-center gap-2">
+            {isMaintenance ? 'Indisponível' : <><Rocket className="w-4 h-4" /> INICIAR</>}
+          </span>
         </button>
 
         {/* Controles Admin */}
@@ -138,7 +144,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
             {onDelete && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(profile); }}
-                className="px-3 py-1.5 rounded bg-red-900/10 hover:bg-red-900/30 text-[#E50914] hover:text-[#FF6B6B] transition-colors border border-red-900/20"
+                className="px-3 py-1.5 rounded bg-purple-900/10 hover:bg-purple-900/30 text-[#8B5CF6] hover:text-[#C4B5FD] transition-colors border border-purple-900/20"
               >
                 <Trash2 className="w-3 h-3" />
               </button>

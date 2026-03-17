@@ -39,8 +39,8 @@ export const Toast: React.FC<ToastProps> = ({ title, message, type, onClose }) =
 
   const config = {
     success: { icon: CheckCircle, color: 'text-green-400', bg: 'bg-green-900/90 border-green-500/50', bar: 'bg-green-500' },
-    error: { icon: AlertCircle, color: 'text-[#FF6B6B]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' },
-    info: { icon: Info, color: 'text-[#FF6B6B]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' }
+    error: { icon: AlertCircle, color: 'text-[#C4B5FD]', bg: 'bg-[#6D28D9]/90 border-[#8B5CF6]/50', bar: 'bg-[#8B5CF6]' },
+    info: { icon: Info, color: 'text-[#C4B5FD]', bg: 'bg-[#6D28D9]/90 border-[#8B5CF6]/50', bar: 'bg-[#8B5CF6]' }
   }[type];
 
   return (
@@ -58,7 +58,7 @@ export const Toast: React.FC<ToastProps> = ({ title, message, type, onClose }) =
         </button>
         {/* Barra de progresso visual */}
         <div className="absolute bottom-0 left-0 h-1 bg-white/10 w-full">
-           <div className={`h-full ${config.bar} transition-all duration-75`} style={{ width: `${progress}%` }} />
+          <div className={`h-full ${config.bar} transition-all duration-75`} style={{ width: `${progress}%` }} />
         </div>
       </div>
     </div>

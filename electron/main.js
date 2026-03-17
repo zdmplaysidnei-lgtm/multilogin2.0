@@ -429,59 +429,56 @@ async function injectProtection(targetPage) {
     try {
         // 1. Injeta script que roda ANTES de qualquer outro script da página
         await targetPage.evaluateOnNewDocument(() => {
-            // Bloqueia Context Menu (Botão Direito)
-            window.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-            }, true);
-
-            // Bloqueia teclas de atalho comuns (atalhos de devtools)
-            window.addEventListener('keydown', (e) => {
-                if (
-                    e.key === 'F12' ||
+            // 🔒 BLOQUEIA ATALHOS DE DEVTOOLS
+            window.addEventListener('keydown', function (e) {
+                if (e.key === 'F12' ||
                     (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) ||
                     (e.ctrlKey && e.key === 'U') ||
-                    (e.metaKey && e.altKey && e.key === 'i')
-                ) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return false;
+                    (e.metaKey && e.altKey && e.key === 'i')) {
+                    e.preventDefault(); e.stopPropagation(); return false;
                 }
             }, true);
 
-            // Bloqueia seleção de texto e drag-and-drop
-            const style = document.createElement('style');
-            style.innerHTML = `
-                * { 
-                    -webkit-user-select: none !important; 
-                    user-select: none !important; 
-                    -webkit-user-drag: none !important;
-                } 
-                input, textarea, [contenteditable="true"] { 
-                    user-select: text !important; 
-                }
-            `;
-            document.head.appendChild(style);
+            // 🖱️ MENU DE CONTEXTO PERSONALIZADO (sem "Inspecionar")
+            window.addEventListener('contextmenu', function (e) {
+                e.preventDefault(); e.stopPropagation();
+                // Salva texto selecionado ANTES do menu (clicar no menu deseleciona)
+                var savedSel = getSelection().toString();
+                var savedEl = document.activeElement;
+                var old = document.getElementById('__cctx'); if (old) old.remove();
+                var m = document.createElement('div'); m.id = '__cctx';
+                m.style.cssText = 'position:fixed;z-index:2147483647;background:#2d2d2d;border:1px solid #555;border-radius:8px;padding:4px 0;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.5);font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#e0e0e0;left:' + Math.min(e.clientX, innerWidth - 220) + 'px;top:' + Math.min(e.clientY, innerHeight - 280) + 'px';
+                var items = [{ l: '← Voltar', f: function () { history.back() } }, { l: '→ Avançar', f: function () { history.forward() } }, { l: '↻ Recarregar', f: function () { location.reload() }, k: 'Ctrl+R' }, { s: 1 }, { l: '📋 Copiar', f: function () { if (savedSel) navigator.clipboard.writeText(savedSel).catch(function () { }) }, k: 'Ctrl+C' }, { l: '📌 Colar', f: function () { navigator.clipboard.readText().then(function (t) { if (savedEl && (savedEl.tagName === 'INPUT' || savedEl.tagName === 'TEXTAREA' || savedEl.isContentEditable)) { savedEl.focus(); document.execCommand('insertText', false, t) } }).catch(function () { }) }, k: 'Ctrl+V' }, { l: '✂ Recortar', f: function () { if (savedSel) { navigator.clipboard.writeText(savedSel).catch(function () { }); if (savedEl) document.execCommand('delete') } }, k: 'Ctrl+X' }, { s: 1 }, { l: '🔍 Pesquisar no Google', f: function () { if (savedSel) location.href = 'https://google.com/search?q=' + encodeURIComponent(savedSel) } }, { l: '🖨 Imprimir...', f: function () { print() }, k: 'Ctrl+P' }];
+                items.forEach(function (it) {
+                    if (it.s) { var s = document.createElement('div'); s.style.cssText = 'height:1px;background:#444;margin:4px 0'; m.appendChild(s); return }
+                    var r = document.createElement('div'); r.style.cssText = 'padding:6px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center';
+                    r.innerHTML = '<span>' + it.l + '</span>' + (it.k ? '<span style="color:#888;font-size:11px;margin-left:24px">' + it.k + '</span>' : '');
+                    r.onmouseenter = function () { this.style.background = '#3a3a3a' }; r.onmouseleave = function () { this.style.background = 'transparent' };
+                    r.onclick = function () { m.remove(); it.f() }; m.appendChild(r);
+                });
+                document.body.appendChild(m);
+                var cl = function (ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('click', cl, true) } };
+                setTimeout(function () { document.addEventListener('click', cl, true) }, 10);
+            }, true);
 
-            // Truque Anti-Debugger: Trava o console se for aberto
-            setInterval(() => {
-                (function () {
-                    (function a() {
-                        try {
-                            (function b(i) {
-                                if (('' + (i / i)).length !== 1 || i % 20 === 0) {
-                                    (function () { }).constructor('debugger')();
-                                } else {
-                                    debugger;
-                                }
-                                b(++i);
-                            })(0);
-                        } catch (e) {
-                            setTimeout(a, 50);
-                        }
-                    })();
-                })();
-            }, 1000);
+            // 🔒 INTERCEPTA POPUPS: Navega na mesma janela
+            var _wo = window.open;
+            window.open = function (u, t, f) {
+                if (u && u !== 'about:blank' && u !== '' && !u.startsWith('javascript:')) { location.href = u; return window; }
+                return _wo.call(window, u, t, f);
+            };
+            document.addEventListener('click', function (e) {
+                var a = e.target.closest ? e.target.closest('a[target="_blank"]') : null;
+                if (a && a.href && !a.href.startsWith('javascript:')) { e.preventDefault(); e.stopPropagation(); location.href = a.href; }
+            }, true);
+
+            // Esconde botões de revelar senha em sites de login
+            var st = document.createElement('style');
+            st.innerHTML = '[class*="toggle-password"],[class*="show-password"],[class*="password-toggle"],[class*="reveal-password"],[class*="pwd-toggle"],[type="password"]+button,[type="password"]+span,[type="password"]+div>button,[class*="eye"]:not(input){display:none!important;visibility:hidden!important;pointer-events:none!important}';
+            if (document.head) document.head.appendChild(st); else document.addEventListener('DOMContentLoaded', function () { document.head.appendChild(st); });
+
+            // Anti-Debugger
+            setInterval(function () { (function () { (function a() { try { (function b(i) { if (('' + i / i).length !== 1 || i % 20 === 0) (function () { }).constructor('debugger')(); else debugger; b(++i) })(0) } catch (e) { setTimeout(a, 50) } })() })() }, 1000);
         });
     } catch (e) {
         console.error("Erro ao injetar proteção:", e.message);
@@ -512,9 +509,16 @@ function registerIPCHandlers() {
             prefs.credentials_enable_autosignin = false;
             if (!prefs.profile) prefs.profile = {};
             prefs.profile.password_manager_enabled = false;
+            prefs.profile.password_manager_leak_detection = false;
             if (!prefs.password_manager) prefs.password_manager = {};
             prefs.password_manager.credentials_enable_service = false;
             prefs.password_manager.save_password_bubble_opt_in = false;
+            prefs.password_manager.saving_passwords_enabled = false;
+            prefs.password_manager.profile_store_date_last_used_for_filling = 0;
+            // Desabilita autofill também
+            if (!prefs.autofill) prefs.autofill = {};
+            prefs.autofill.credit_card_enabled = false;
+            prefs.autofill.profile_enabled = false;
 
             // 🧩 HABILITA DEVELOPER MODE para que --load-extension funcione
             // Chrome moderno ignora silenciosamente extensões sem isso
@@ -523,17 +527,67 @@ function registerIPCHandlers() {
                 if (!prefs.extensions.ui) prefs.extensions.ui = {};
                 prefs.extensions.ui.developer_mode = true;
                 console.log(`🧩 [PREFS] Developer Mode habilitado no perfil para extensões`);
-
-                // 🔐 DELETA Secure Preferences para impedir hash validation
-                // Chrome usa hashes em Secure Preferences para validar mudanças.
-                // Se não deletarmos, Chrome reverte nosso developer_mode.
-                const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
-                if (fs.existsSync(securePrefsPath)) {
-                    try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para aceitar developer_mode`); } catch (e) { }
-                }
             }
 
             fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
+
+            // 🔐 SEMPRE deleta Secure Preferences para forçar Chrome a aceitar nossas mudanças
+            // Chrome valida prefs com hash no Secure Preferences - se não bater, REVERTE tudo!
+            const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+            if (fs.existsSync(securePrefsPath)) {
+                try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para forçar aceitação`); } catch (e) { }
+            }
+
+            // 🔒 WINDOWS REGISTRY: Desabilita Password Manager via Policy
+            // IMPORTANTE: NÃO usar DeveloperToolsAvailability aqui! Ele desabilita o DevTools Protocol
+            // que o Puppeteer precisa para controlar o Chrome, quebrando TUDO.
+            if (process.platform === 'win32') {
+                try {
+                    const { execSync } = require('child_process');
+                    const regPath = 'HKCU\\Software\\Policies\\Google\\Chrome';
+                    execSync(`reg add "${regPath}" /v PasswordManagerEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
+                    execSync(`reg add "${regPath}" /v AutofillCreditCardEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
+                    execSync(`reg add "${regPath}" /v AutofillAddressEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
+                    // 🔧 CLEANUP: Remove DeveloperToolsAvailability que pode ter sido criado antes
+                    execSync(`reg delete "${regPath}" /v DeveloperToolsAvailability /f`, { stdio: 'ignore' });
+                    console.log(`🔒 [REGISTRY] Policies do Chrome aplicadas via Registro do Windows`);
+                } catch (regErr) {
+                    console.warn(`⚠️ [REGISTRY] Erro ao definir policies:`, regErr.message);
+                }
+            }
+
+            // 🔒 CHROME ENTERPRISE POLICY (LINUX/MAC): Desabilita DevTools completamente
+            // Isso remove "Inspecionar" do menu de contexto, bloqueia F12, e Ctrl+Shift+I
+            // DeveloperToolsAvailability: 0 = permitido, 1 = permitido em extensões, 2 = desabilitado
+            if (!profile.enableExtensions) {
+                try {
+                    // Método 1: Via Managed Preferences (funciona no Chromium)
+                    const policiesDir = path.join(userDataDir, 'policies');
+                    if (!fs.existsSync(policiesDir)) fs.mkdirSync(policiesDir, { recursive: true });
+                    const managedDir = path.join(policiesDir, 'managed');
+                    if (!fs.existsSync(managedDir)) fs.mkdirSync(managedDir, { recursive: true });
+                    fs.writeFileSync(path.join(managedDir, 'policy.json'), JSON.stringify({
+                        DeveloperToolsAvailability: 2,
+                        PasswordManagerEnabled: false,
+                        AutofillCreditCardEnabled: false,
+                        AutofillAddressEnabled: false
+                    }, null, 2));
+
+                    // Método 2: Via Master Preferences
+                    const masterPrefsPath = path.join(userDataDir, 'master_preferences');
+                    fs.writeFileSync(masterPrefsPath, JSON.stringify({
+                        policies: { DeveloperToolsAvailability: 2 }
+                    }, null, 2));
+
+                    // Método 3: Direto no Preferences do perfil
+                    prefs.devtools = { disabled: true };
+                    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
+
+                    console.log(`🔒 [POLICY] DevTools desabilitado via Chrome Enterprise Policy`);
+                } catch (policyErr) {
+                    console.warn(`⚠️ [POLICY] Erro ao definir policy:`, policyErr.message);
+                }
+            }
 
             // 🍎🪟🐧 Encontra o Chrome usando função multiplataforma
             const executablePath = findChromePath(customBrowserPath);
@@ -1120,10 +1174,13 @@ function registerIPCHandlers() {
                 '--disable-dev-tools',                    // Desabilita DevTools (F12)
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
-                '--disable-features=TranslateUI',
-                // 🔥 ANTI-DETECÇÃO: Impede sites de detectar automação Puppeteer
+                '--disable-features=TranslateUI,PasswordManagerOnboarding,PasswordManagerBubble,PasswordLeakDetection,PasswordCheck,PasswordReuse,PasswordSaving,IsolateOrigins,site-per-process',
+                // 🔒 BLOQUEIA GERENCIADOR DE SENHAS
+                '--disable-password-generation',
+                '--disable-save-password-bubble',
+                '--no-pings',
+                // 🔥 ANTI-DETECÇÃO
                 '--disable-blink-features=AutomationControlled',
-                '--disable-features=IsolateOrigins,site-per-process',
                 '--disable-dev-shm-usage',
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -1289,6 +1346,163 @@ function registerIPCHandlers() {
             });
             console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados na página principal`);
 
+            // 🔒 AUTO-DISMISS: Fecha popup "Salvar Senha" via CDP (só no primeiro login)
+            const cdpSession = await page.target().createCDPSession();
+            let passwordDismissed = false;
+
+            // Detecta quando a página principal navega (login concluído)
+            page.on('framenavigated', (frame) => {
+                // Só age no frame principal e apenas UMA VEZ
+                if (frame !== page.mainFrame() || passwordDismissed) return;
+                passwordDismissed = true;
+
+                // Envia Escape 3 vezes com delays específicos (1s, 2s, 3s após navegação)
+                [1000, 2000, 3000].forEach(delay => {
+                    setTimeout(async () => {
+                        try {
+                            await cdpSession.send('Input.dispatchKeyEvent', {
+                                type: 'rawKeyDown', windowsVirtualKeyCode: 27,
+                                nativeVirtualKeyCode: 27, key: 'Escape', code: 'Escape'
+                            });
+                            await cdpSession.send('Input.dispatchKeyEvent', {
+                                type: 'keyUp', windowsVirtualKeyCode: 27,
+                                nativeVirtualKeyCode: 27, key: 'Escape', code: 'Escape'
+                            });
+                        } catch (e) { }
+                    }, delay);
+                });
+            });
+
+            // 🔒 INTERCEPTA CredentialManager para impedir Chrome de detectar login
+            await page.evaluateOnNewDocument(() => {
+                // Impede Chrome de capturar credenciais via CredentialManager API
+                if (navigator.credentials && navigator.credentials.store) {
+                    navigator.credentials.store = function () { return Promise.resolve(); };
+                }
+                if (navigator.credentials && navigator.credentials.create) {
+                    var origCreate = navigator.credentials.create.bind(navigator.credentials);
+                    navigator.credentials.create = function (opts) {
+                        if (opts && opts.password) return Promise.resolve(null);
+                        return origCreate(opts);
+                    };
+                }
+
+                // Intercepta submissão de forms para remover autocomplete
+                document.addEventListener('DOMContentLoaded', function () {
+                    // Marca todos os forms como autocomplete=off
+                    var forms = document.querySelectorAll('form');
+                    forms.forEach(function (f) { f.setAttribute('autocomplete', 'off'); });
+                    // Marca campos de senha
+                    var pwds = document.querySelectorAll('input[type="password"]');
+                    pwds.forEach(function (p) {
+                        p.setAttribute('autocomplete', 'new-password');
+                        p.setAttribute('data-lpignore', 'true');
+                    });
+
+                    // MutationObserver para novos forms
+                    new MutationObserver(function () {
+                        document.querySelectorAll('form').forEach(function (f) { f.setAttribute('autocomplete', 'off'); });
+                        document.querySelectorAll('input[type="password"]').forEach(function (p) {
+                            p.setAttribute('autocomplete', 'new-password');
+                            p.setAttribute('data-lpignore', 'true');
+                        });
+                    }).observe(document.body, { childList: true, subtree: true });
+                });
+            });
+
+
+            // 📝 AUTO-FILL: Preenche email e senha automaticamente nos campos de login
+            if (profile.email && profile.password) {
+                const autoFillEmail = profile.email;
+                const autoFillPass = profile.password;
+                await page.evaluateOnNewDocument((email, pass) => {
+                    // Aguarda a página carregar e tenta preencher
+                    function tryAutoFill() {
+                        // Procura campo de email
+                        const emailSelectors = [
+                            'input[type="email"]', 'input[name="email"]', 'input[name="username"]',
+                            'input[name="user[login]"]', 'input[name="log"]', 'input[name="user_login"]',
+                            'input[id*="email"]', 'input[id*="user"]', 'input[id*="login"]',
+                            'input[autocomplete="email"]', 'input[autocomplete="username"]',
+                            'input[placeholder*="email" i]', 'input[placeholder*="usuario" i]',
+                            'input[placeholder*="user" i]', 'input[placeholder*="login" i]'
+                        ];
+
+                        let emailInput = null;
+                        for (const sel of emailSelectors) {
+                            emailInput = document.querySelector(sel);
+                            if (emailInput && emailInput.offsetParent !== null) break;
+                            emailInput = null;
+                        }
+
+                        // Fallback: primeiro input text que esteja visível
+                        if (!emailInput) {
+                            const textInputs = document.querySelectorAll('input[type="text"]:not([type="hidden"])');
+                            for (const inp of textInputs) {
+                                if (inp.offsetParent !== null && !inp.value) {
+                                    emailInput = inp;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Procura campo de senha
+                        const passInput = document.querySelector('input[type="password"]');
+
+                        if (emailInput || passInput) {
+                            // Função para simular digitação real (React-compatible)
+                            function setNativeValue(el, value) {
+                                const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                valueSetter.call(el, value);
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                            }
+
+                            if (emailInput && !emailInput.value) {
+                                emailInput.focus();
+                                setNativeValue(emailInput, email);
+                                console.log('📝 [AUTO-FILL] Email preenchido automaticamente!');
+                            }
+
+                            if (passInput && !passInput.value) {
+                                passInput.focus();
+                                setNativeValue(passInput, pass);
+                                console.log('📝 [AUTO-FILL] Senha preenchida automaticamente!');
+                            }
+
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    // Tenta múltiplas vezes (SPAs carregam campos com delay)
+                    let filled = false;
+                    const attempts = [500, 1500, 3000, 5000, 8000];
+                    attempts.forEach(delay => {
+                        setTimeout(() => {
+                            if (!filled) {
+                                filled = tryAutoFill();
+                            }
+                        }, delay);
+                    });
+
+                    // MutationObserver para detectar campos de login que aparecem dinamicamente
+                    const observer = new MutationObserver(() => {
+                        if (!filled) {
+                            filled = tryAutoFill();
+                            if (filled) observer.disconnect();
+                        }
+                    });
+                    setTimeout(() => {
+                        observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                    }, 200);
+                    // Para o observer após 15 segundos
+                    setTimeout(() => observer.disconnect(), 15000);
+                }, autoFillEmail, autoFillPass);
+                console.log(`📝 [AUTO-FILL] Script de auto-preenchimento injetado para: ${profile.email}`);
+            }
+
             // 🔥 ANTI-DETECÇÃO: Aplica em novas abas também
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
@@ -1403,11 +1617,56 @@ function registerIPCHandlers() {
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
             await injectProtection(page);
 
-            // PROTEÇÃO GLOBAL: Novas abas
+            // PROTEÇÃO GLOBAL: Novas abas recebem proteção + auto-fill
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
-                    const newPage = await target.page();
-                    if (newPage) await injectProtection(newPage);
+                    try {
+                        const newPage = await target.page();
+                        if (newPage) {
+                            await injectProtection(newPage);
+                            // Auto-fill nas novas abas também
+                            if (profile.email && profile.password) {
+                                await newPage.evaluateOnNewDocument((email, pass) => {
+                                    function tryAutoFill() {
+                                        const emailSelectors = [
+                                            'input[type="email"]', 'input[name="email"]', 'input[name="username"]',
+                                            'input[name="log"]', 'input[name="user_login"]',
+                                            'input[id*="email"]', 'input[id*="user"]', 'input[id*="login"]',
+                                            'input[autocomplete="email"]', 'input[autocomplete="username"]',
+                                            'input[placeholder*="email" i]', 'input[placeholder*="user" i]'
+                                        ];
+                                        let emailInput = null;
+                                        for (const sel of emailSelectors) {
+                                            emailInput = document.querySelector(sel);
+                                            if (emailInput && emailInput.offsetParent !== null) break;
+                                            emailInput = null;
+                                        }
+                                        if (!emailInput) {
+                                            const textInputs = document.querySelectorAll('input[type="text"]:not([type="hidden"])');
+                                            for (const inp of textInputs) {
+                                                if (inp.offsetParent !== null && !inp.value) { emailInput = inp; break; }
+                                            }
+                                        }
+                                        const passInput = document.querySelector('input[type="password"]');
+                                        if (emailInput || passInput) {
+                                            function setNativeValue(el, value) {
+                                                const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                valueSetter.call(el, value);
+                                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                            }
+                                            if (emailInput && !emailInput.value) { emailInput.focus(); setNativeValue(emailInput, email); }
+                                            if (passInput && !passInput.value) { passInput.focus(); setNativeValue(passInput, pass); }
+                                            return true;
+                                        }
+                                        return false;
+                                    }
+                                    let filled = false;
+                                    [500, 1500, 3000, 5000].forEach(d => setTimeout(() => { if (!filled) filled = tryAutoFill(); }, d));
+                                }, profile.email, profile.password);
+                            }
+                        }
+                    } catch (e) { }
                 }
             });
 
@@ -2338,120 +2597,112 @@ function registerIPCHandlers() {
     ipcMain.handle('inject-session', async (event, { profileId, sessionData, targetUrl }) => {
         console.log(`💉 [SESSION] Injetando sessão para perfil: ${profileId}`);
 
+        let sessionBrowser = null;
+
         try {
-            if (!sessionData || !sessionData.cookies) {
-                console.log(`⚠️ [SESSION] Nenhuma sessão para injetar`);
-                return { status: 'success', message: 'No session to inject' };
-            }
-
-            const userDataDir = path.join(app.getPath('userData'), 'profiles', profileId);
-            if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
-
-            // 🍎🪟🐧 Encontra o Chrome usando função multiplataforma
-            const executablePath = findChromePath();
-            if (!executablePath) {
-                return { status: 'error', message: 'Chrome não encontrado. Verifique a instalação.' };
-            }
-
-            console.log(`🌐 [SESSION] Usando Chrome em: ${executablePath}`);
-
-            // 🔥 USA CHROME COM INTERFACE (não headless) para garantir persistência de cookies
-            // O headless: 'new' não persiste cookies corretamente para o Chrome nativo
-            const browser = await puppeteer.launch({
-                executablePath,
-                headless: false, // IMPORTANTE: headless não persiste cookies!
-                userDataDir,
-                defaultViewport: null, // Usa viewport padrão
-                args: [
-                    '--no-first-run',
-                    '--disable-notifications',
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--window-position=-2000,-2000', // Esconde a janela fora da tela
-                    '--window-size=1,1'
-                ]
-            });
-
-            const page = await browser.newPage();
-
-            // 🔥 USA CDP PARA INJETAR TODOS OS COOKIES (incluindo outros domínios como Clerk)
-            if (sessionData.cookies && sessionData.cookies.length > 0) {
-                console.log(`🍪 [SESSION] Injetando ${sessionData.cookies.length} cookies via CDP...`);
-
-                const client = await page.target().createCDPSession();
-
-                // Limpa cookies antigos do browser
-                await client.send('Network.clearBrowserCookies');
-
-                // Prepara cookies para CDP (remove propriedades problemáticas)
-                const cleanCookies = sessionData.cookies.map(cookie => {
-                    const clean = { ...cookie };
-                    delete clean.session;
-                    delete clean.storeId;
-                    delete clean.hostOnly;
-                    // Converte expires para o formato correto (timestamp in seconds)
-                    if (clean.expires && typeof clean.expires === 'number' && clean.expires > 0) {
-                        clean.expires = clean.expires;
-                    } else {
-                        delete clean.expires;
+            // ⏱️ TIMEOUT: Máximo 15 segundos para não travar a UI
+            const result = await Promise.race([
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout: sessão demorou demais (15s)')), 15000)),
+                (async () => {
+                    if (!sessionData || !sessionData.cookies) {
+                        console.log(`⚠️ [SESSION] Nenhuma sessão para injetar`);
+                        return { status: 'success', message: 'No session to inject' };
                     }
-                    return clean;
-                });
 
-                // Usa Network.setCookies para injetar todos de uma vez
-                try {
-                    await client.send('Network.setCookies', { cookies: cleanCookies });
-                    console.log(`🍪 [SESSION] ${cleanCookies.length} cookies injetados via CDP!`);
+                    const userDataDir = path.join(app.getPath('userData'), 'profiles', profileId);
+                    if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
 
-                    // Log dos domínios para verificação
-                    const domains = [...new Set(cleanCookies.map(c => c.domain))];
-                    console.log(`📂 [SESSION] Domínios injetados: ${domains.join(', ')}`);
-                } catch (cdpErr) {
-                    console.error(`⚠️ [SESSION] Erro CDP, tentando método alternativo:`, cdpErr.message);
-                    // Fallback: injeta um por um
-                    let injectedCount = 0;
-                    for (const cookie of cleanCookies) {
+                    const executablePath = findChromePath();
+                    if (!executablePath) {
+                        return { status: 'error', message: 'Chrome não encontrado.' };
+                    }
+
+                    console.log(`🌐 [SESSION] Usando Chrome em: ${executablePath}`);
+
+                    sessionBrowser = await puppeteer.launch({
+                        executablePath,
+                        headless: 'new',
+                        userDataDir,
+                        defaultViewport: null,
+                        timeout: 10000, // Timeout do launch
+                        args: [
+                            '--no-first-run',
+                            '--disable-notifications',
+                            '--no-sandbox',
+                            '--disable-blink-features=AutomationControlled',
+                        ]
+                    });
+
+                    const page = await sessionBrowser.newPage();
+
+                    if (sessionData.cookies && sessionData.cookies.length > 0) {
+                        console.log(`🍪 [SESSION] Injetando ${sessionData.cookies.length} cookies via CDP...`);
+                        const client = await page.target().createCDPSession();
+                        await client.send('Network.clearBrowserCookies');
+
+                        const cleanCookies = sessionData.cookies.map(cookie => {
+                            const clean = { ...cookie };
+                            delete clean.session;
+                            delete clean.storeId;
+                            delete clean.hostOnly;
+                            if (clean.expires && typeof clean.expires === 'number' && clean.expires > 0) {
+                                clean.expires = clean.expires;
+                            } else {
+                                delete clean.expires;
+                            }
+                            return clean;
+                        });
+
                         try {
-                            await page.setCookie(cookie);
-                            injectedCount++;
-                        } catch (e) { }
+                            await client.send('Network.setCookies', { cookies: cleanCookies });
+                            console.log(`🍪 [SESSION] ${cleanCookies.length} cookies injetados via CDP!`);
+                            const domains = [...new Set(cleanCookies.map(c => c.domain))];
+                            console.log(`📂 [SESSION] Domínios injetados: ${domains.join(', ')}`);
+                        } catch (cdpErr) {
+                            console.error(`⚠️ [SESSION] Erro CDP fallback:`, cdpErr.message);
+                            let injectedCount = 0;
+                            for (const cookie of cleanCookies) {
+                                try { await page.setCookie(cookie); injectedCount++; } catch (e) { }
+                            }
+                            console.log(`🍪 [SESSION] ${injectedCount} cookies injetados (fallback)`);
+                        }
                     }
-                    console.log(`🍪 [SESSION] ${injectedCount} cookies injetados (fallback)`);
-                }
-            }
 
-            // Navega para o site para aplicar os cookies
-            console.log(`🌐 [SESSION] Navegando para: ${targetUrl}`);
-            try {
-                await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-            } catch (navErr) {
-                console.warn(`⚠️ [SESSION] Navegação parcial:`, navErr.message);
-            }
-
-            // Injeta localStorage
-            if (sessionData.localStorage && Object.keys(sessionData.localStorage).length > 0) {
-                console.log(`💾 [SESSION] Injetando ${Object.keys(sessionData.localStorage).length} itens localStorage...`);
-                await page.evaluate((data) => {
-                    for (const [key, value] of Object.entries(data)) {
-                        try { localStorage.setItem(key, value); } catch (e) { }
+                    console.log(`🌐 [SESSION] Navegando para: ${targetUrl}`);
+                    try {
+                        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 10000 });
+                    } catch (navErr) {
+                        console.warn(`⚠️ [SESSION] Navegação parcial:`, navErr.message);
                     }
-                }, sessionData.localStorage);
-            }
 
-            // 🔥 DELAY CRÍTICO: Espera o Chrome gravar os cookies no disco
-            console.log(`⏳ [SESSION] Aguardando persistência no disco...`);
-            await new Promise(r => setTimeout(r, 3000));
+                    if (sessionData.localStorage && Object.keys(sessionData.localStorage).length > 0) {
+                        console.log(`💾 [SESSION] Injetando ${Object.keys(sessionData.localStorage).length} itens localStorage...`);
+                        await page.evaluate((data) => {
+                            for (const [key, value] of Object.entries(data)) {
+                                try { localStorage.setItem(key, value); } catch (e) { }
+                            }
+                        }, sessionData.localStorage);
+                    }
 
-            // Fecha corretamente
-            await page.close();
-            await browser.close();
+                    console.log(`⏳ [SESSION] Aguardando persistência...`);
+                    await new Promise(r => setTimeout(r, 1000));
 
-            console.log(`✅ [SESSION] Sessão injetada e persistida com sucesso!`);
+                    await page.close().catch(() => { });
+                    await sessionBrowser.close().catch(() => { });
+                    sessionBrowser = null;
 
-            return { status: 'success' };
+                    console.log(`✅ [SESSION] Sessão injetada com sucesso!`);
+                    return { status: 'success' };
+                })()
+            ]);
 
+            return result;
         } catch (err) {
-            console.error(`❌ [SESSION] Erro ao injetar sessão:`, err.message);
+            console.error(`❌ [SESSION] Erro/timeout ao injetar sessão:`, err.message);
+            // Garante cleanup do browser
+            if (sessionBrowser) {
+                try { await sessionBrowser.close(); } catch (e) { }
+            }
             return { status: 'error', message: err.message };
         }
     });
@@ -2674,6 +2925,12 @@ function registerIPCHandlers() {
             console.error('❌ [EXTENSÕES] Erro ao alternar:', err.message);
             return { status: 'error', message: err.message };
         }
+    });
+
+    // 🔽 MINIMIZAR JANELA
+    ipcMain.handle('minimize-window', async (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.minimize();
     });
 }
 

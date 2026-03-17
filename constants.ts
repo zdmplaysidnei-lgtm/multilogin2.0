@@ -39,14 +39,14 @@ export const INITIAL_SETTINGS: AppSettings = {
     enabled: false,
     type: 'text',
     contentUrl: '',
-    textContent: 'Bem-vindo ao Rateioflix - Ferramentas Premium!',
+    textContent: 'Bem-vindo ao Sidnei - Ferramentas Ilimitadas!',
     size: 'md',
     actionUrl: '',
     actionText: 'Saiba Mais',
     textStyle: {
       fontFamily: 'Inter',
-      gradientFrom: '#ef4444',
-      gradientTo: '#f43f5e',
+      gradientFrom: '#8B5CF6',
+      gradientTo: '#a855f7',
       gradientDirection: 'to right',
       fontSize: 2,
       textAlign: 'center'

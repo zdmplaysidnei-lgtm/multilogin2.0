@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
 import { Profile } from '../types';
 
 interface BrowserWindowProps {
@@ -584,8 +584,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
       <div onMouseDown={startDrag} onDoubleClick={() => setIsMaximized(!isMaximized)} className="bg-[#202020] flex items-center px-4 pt-2 justify-between border-b border-gray-800 cursor-grab active:cursor-grabbing select-none">
         <div className="flex gap-2 pb-2" onMouseDown={e => e.stopPropagation()}>
-          <div onClick={onClose} className="w-3.5 h-3.5 rounded-full bg-[#E50914] cursor-pointer hover:bg-red-400" />
-          <div onClick={() => setIsMaximized(!isMaximized)} className="w-3.5 h-3.5 rounded-full bg-green-500 cursor-pointer hover:bg-green-400" />
+          <div onClick={onTerminate} className="w-4 h-4 rounded-full bg-red-500 cursor-pointer hover:bg-red-400 flex items-center justify-center" title="Fechar"><X size={10} className="text-red-900" /></div>
+          <div onClick={onClose} className="w-4 h-4 rounded-full bg-yellow-500 cursor-pointer hover:bg-yellow-400 flex items-center justify-center" title="Minimizar"><Minus size={10} className="text-yellow-900" /></div>
+          <div onClick={() => setIsMaximized(!isMaximized)} className="w-4 h-4 rounded-full bg-green-500 cursor-pointer hover:bg-green-400 flex items-center justify-center" title="Maximizar"><Square size={8} className="text-green-900" /></div>
         </div>
 
         {/* BARRA DE ABAS - DINÂMICA */}
@@ -603,7 +604,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         </div>
 
         <div className="text-gray-500 text-[10px] font-bold uppercase flex gap-3 items-center pb-2">
-          <ShieldCheck size={12} className="text-green-500" /> Multilogin Rateioflix
+          <ShieldCheck size={12} className="text-green-500" /> Multilogin Sidnei
         </div>
       </div>
 
@@ -676,7 +677,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       {download && (
         <div className="bg-[#252525] border-b border-gray-700 px-4 py-2 flex items-center gap-4 animate-fade-in">
           <div className="p-1.5 bg-blue-600/20 rounded-lg text-blue-400">
-            {download.state === 'downloading' ? <Download size={14} className="animate-bounce" /> : download.state === 'success' ? <CheckCircle size={14} className="text-green-500" /> : <AlertCircle size={14} className="text-[#E50914]" />}
+            {download.state === 'downloading' ? <Download size={14} className="animate-bounce" /> : download.state === 'success' ? <CheckCircle size={14} className="text-green-500" /> : <AlertCircle size={14} className="text-[#8B5CF6]" />}
           </div>
           <div className="flex-1">
             <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">
@@ -684,7 +685,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               <span>{download.state === 'downloading' ? `${download.progress}%` : download.state.toUpperCase()}</span>
             </div>
             <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
-              <div className={`h-full transition-all duration-300 ${download.state === 'success' ? 'bg-green-500' : download.state === 'error' ? 'bg-[#E50914]' : 'bg-blue-500'}`} style={{ width: `${download.progress}%` }} />
+              <div className={`h-full transition-all duration-300 ${download.state === 'success' ? 'bg-green-500' : download.state === 'error' ? 'bg-[#8B5CF6]' : 'bg-blue-500'}`} style={{ width: `${download.progress}%` }} />
             </div>
           </div>
           <button onClick={() => setDownload(null)} className="text-gray-600 hover:text-white"><X size={14} /></button>
@@ -708,13 +709,13 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           ))
         ) : (
           <div className="absolute inset-0 bg-[#0f0f0f] flex flex-col items-center justify-center gap-6">
-            <Database className="w-16 h-16 text-[#E50914] animate-pulse" />
+            <Database className="w-16 h-16 text-[#8B5CF6] animate-pulse" />
             <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 143)...</h3>
           </div>
         )}
         {isLoading && !isRestoringSession && (
           <div className="absolute inset-0 bg-black/10 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10">
-            <RefreshCw className="w-8 h-8 text-[#E50914] animate-spin" />
+            <RefreshCw className="w-8 h-8 text-[#8B5CF6] animate-spin" />
           </div>
         )}
       </div>

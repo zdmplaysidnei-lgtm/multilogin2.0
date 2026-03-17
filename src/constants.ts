@@ -2,7 +2,7 @@
 import { AppSettings, Profile, Role, User, FingerprintConfig } from './types';
 
 // O sistema agora é 100% Supabase. 
-export const HOTMART_CHECKOUT_URL = "https://sso.hotmart.com/login"; 
+export const HOTMART_CHECKOUT_URL = "https://sso.hotmart.com/login";
 export const ADMIN_SUPPORT_LINK = "https://t.me/+nNeDGqzMiUo5MWFh";
 
 export const DEFAULT_ADS = [
@@ -23,7 +23,7 @@ export const INITIAL_SETTINGS: AppSettings = {
   defaultMemberPassword: 'membro123',
   tutorialLink: 'https://youtube.com',
   categories: ["IAS", "IMAGENS", "VÍDEOS", "OUTROS"],
-  blockedUrls: [], 
+  blockedUrls: [],
   popup: {
     enabled: false,
     type: 'text',
@@ -32,7 +32,7 @@ export const INITIAL_SETTINGS: AppSettings = {
     size: 'md',
     textStyle: {
       fontFamily: 'Inter',
-      gradientFrom: '#E50914',
+      gradientFrom: '#8B5CF6',
       gradientTo: '#ec4899',
       gradientDirection: 'to right',
       fontSize: 2,
