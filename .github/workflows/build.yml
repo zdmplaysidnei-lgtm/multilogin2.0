@@ -7,26 +7,23 @@ on:
       - 'v*'
   pull_request:
     branches: [main, master]
-  workflow_dispatch: # Permite executar manualmente
+  workflow_dispatch:
 
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # Windows
           - os: windows-latest
             platform: win
             arch: x64
-          # macOS Intel
           - os: macos-latest
             platform: mac
             arch: x64
-          # macOS Apple Silicon (M1/M2)
           - os: macos-latest
             platform: mac
             arch: arm64
-          # Linux
           - os: ubuntu-latest
             platform: linux
             arch: x64
@@ -45,6 +42,9 @@ jobs:
 
       - name: 📦 Install dependencies
         run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
 
       - name: 🔨 Build Vite
         run: npm run build
@@ -72,19 +72,21 @@ jobs:
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.zip
-            dist/*.AppImage
-            dist/*.deb
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.blockmap
           if-no-files-found: ignore
 
-  # Job para criar Release quando tiver tag
   release:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    
+    permissions:
+      contents: write
+
     steps:
       - name: 📥 Download all artifacts
         uses: actions/download-artifact@v4
@@ -95,11 +97,11 @@ jobs:
         run: find artifacts -type f
 
       - name: 🚀 Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

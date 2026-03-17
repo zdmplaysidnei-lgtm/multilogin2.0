@@ -50,6 +50,9 @@
   "build": {
     "appId": "com.sidnei.ferramentas",
     "productName": "Sidnei - Ferramentas Ilimitadas",
+    "directories": {
+      "output": "release"
+    },
     "asar": true,
     "asarUnpack": [
       "**/*.dll",
@@ -74,7 +77,6 @@
         "dmg",
         "zip"
       ],
-      "icon": "electron/icon.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
@@ -84,7 +86,6 @@
         "AppImage",
         "deb"
       ],
-      "icon": "electron/icon.png",
       "category": "Utility"
     }
   }
