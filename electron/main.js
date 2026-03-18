@@ -362,8 +362,8 @@ function createFloatingButtons(profileId) {
                 -webkit-app-region: no-drag; /* BOTÕES PRECISAM DE NO-DRAG PARA SEREM CLICÁVEIS */
             }
             button:hover { transform: scale(1.1); filter: brightness(1.2); }
-            .back { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
-            .forward { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+            .back { background: linear-gradient(135deg, #6366f1, #E50914); }
+            .forward { background: linear-gradient(135deg, #6366f1, #E50914); }
             .reload { background: linear-gradient(135deg, #10b981, #059669); }
             .close { background: linear-gradient(135deg, #ef4444, #dc2626); }
         </style>
@@ -2112,7 +2112,7 @@ function registerIPCHandlers() {
 
                 // proxy-chain já cuida da autenticação, não precisa de page.authenticate()
 
-                // Aplica o "Sidnei Shield" em cada aba individualmente
+                // Aplica o "Rateio Flix Shield" em cada aba individualmente
                 await page.evaluateOnNewDocument((email, pass, customCSS) => {
                     // ========== EVASÃO ANTI-DETECÇÃO ==========
                     // Remove webdriver property
@@ -2209,11 +2209,11 @@ function registerIPCHandlers() {
                                     background: linear-gradient(135deg, rgba(20, 20, 35, 0.97) 0%, rgba(30, 25, 50, 0.97) 100%);
                                     padding: 8px 16px;
                                     border-radius: 30px;
-                                    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(138, 43, 226, 0.3);
+                                    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(229, 9, 20, 0.3);
                                     backdrop-filter: blur(20px);
                                     cursor: move;
                                     user-select: none;
-                                    border: 1px solid rgba(138, 43, 226, 0.3);
+                                    border: 1px solid rgba(229, 9, 20, 0.3);
                                 }
                                 #sidnei-nav-bar button {
                                     width: 40px;
@@ -2255,11 +2255,11 @@ function registerIPCHandlers() {
                                 }
                                 /* Botão Voltar - Roxo */
                                 #snb-back {
-                                    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
-                                    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+                                    background: linear-gradient(135deg, #E50914 0%, #E50914 100%);
+                                    box-shadow: 0 4px 15px rgba(229, 9, 20, 0.4);
                                 }
                                 #snb-back:hover {
-                                    box-shadow: 0 6px 25px rgba(139, 92, 246, 0.6);
+                                    box-shadow: 0 6px 25px rgba(229, 9, 20, 0.6);
                                 }
                                 /* Botão Avançar - Azul */
                                 #snb-forward {

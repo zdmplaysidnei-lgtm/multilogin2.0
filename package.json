@@ -1,13 +1,13 @@
 {
   "name": "rateioflix-ferramentas",
-  "productName": "Sidnei - Ferramentas Ilimitadas",
+  "productName": "Rateio Flix - Ferramentas Premium",
   "version": "2.0.0",
   "private": true,
   "main": "./electron/main.js",
   "homepage": "./",
   "description": "Sistema de multilogin avançado estilo Netflix",
   "author": {
-    "name": "Sidnei",
+    "name": "Rateio Flix",
     "email": "rateioflix@example.com"
   },
   "dependencies": {
@@ -49,7 +49,7 @@
   },
   "build": {
     "appId": "com.sidnei.ferramentas",
-    "productName": "Sidnei - Ferramentas Ilimitadas",
+    "productName": "Rateio Flix - Ferramentas Premium",
     "directories": {
       "output": "release"
     },

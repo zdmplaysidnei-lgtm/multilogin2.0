@@ -2,7 +2,7 @@
 import { AppSettings, Profile, Role, User, FingerprintConfig } from './types';
 
 export const API_BASE_URL = "https://api.karaokeraf.com";
-export const VPS_API_KEY = "SIDNEI_PRO_TOKEN_2025_SECURE";
+export const VPS_API_KEY = "RATEIO FLIX_PRO_TOKEN_2025_SECURE";
 
 export const ADMIN_SUPPORT_LINK = "https://t.me/+nNeDGqzMiUo5MWFh";
 export const HOTMART_CHECKOUT_URL = "https://sso.hotmart.com/login?service=https%3A%2F%2Fsso.hotmart.com%2Foauth2.0%2FcallbackAuthorize%3Fclient_id%3D0fff6c2a-971c-4f7a-b0b3-3032b7a26319%26scope%3Dopenid%2Bprofile%2Bauthorities%2Bemail%2Buser%26redirect_uri%3Dhttps%253A%252F%252Fconsumer.hotmart.com%252Fauth%252Flogin%26response_type%3Dcode%26response_mode%3Dquery%26state%3Dad7880cd44ce459bbfff5983d1c5565b%26client_name%3DCasOAuthClient";
@@ -39,13 +39,13 @@ export const INITIAL_SETTINGS: AppSettings = {
     enabled: false,
     type: 'text',
     contentUrl: '',
-    textContent: 'Bem-vindo ao Sidnei - Ferramentas Ilimitadas!',
+    textContent: 'Bem-vindo ao Rateio Flix - Ferramentas Premium!',
     size: 'md',
     actionUrl: '',
     actionText: 'Saiba Mais',
     textStyle: {
       fontFamily: 'Inter',
-      gradientFrom: '#8B5CF6',
+      gradientFrom: '#E50914',
       gradientTo: '#a855f7',
       gradientDirection: 'to right',
       fontSize: 2,

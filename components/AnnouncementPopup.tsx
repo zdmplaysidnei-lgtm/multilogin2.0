@@ -22,12 +22,12 @@ export const AnnouncementPopup: React.FC<AnnouncementPopupProps> = ({ config, on
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in">
-      <div className={`relative ${sizeClasses[config.size]} w-full bg-[#141414] border border-[#8B5CF6]/30 rounded-2xl shadow-[0_0_50px_rgba(139,92,246,0.4)] overflow-hidden flex flex-col animate-scale-up`}>
+      <div className={`relative ${sizeClasses[config.size]} w-full bg-[#141414] border border-[#E50914]/30 rounded-2xl shadow-[0_0_50px_rgba(229,9,20,0.4)] overflow-hidden flex flex-col animate-scale-up`}>
 
         {/* Botão Fechar - Z-Index Aumentado */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-[100] p-2 bg-black/60 hover:bg-[#8B5CF6] rounded-full text-white backdrop-blur-md border border-white/20 transition-all hover:scale-110 shadow-lg cursor-pointer"
+          className="absolute top-4 right-4 z-[100] p-2 bg-black/60 hover:bg-[#E50914] rounded-full text-white backdrop-blur-md border border-white/20 transition-all hover:scale-110 shadow-lg cursor-pointer"
           title="Fechar Aviso"
         >
           <X className="w-6 h-6" />
@@ -58,7 +58,7 @@ export const AnnouncementPopup: React.FC<AnnouncementPopupProps> = ({ config, on
             {config.type === 'text' && (
               <div className="p-12 w-full h-full flex flex-col items-center justify-center overflow-y-auto custom-scrollbar">
                 {/* Fundo decorativo sutil */}
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#6D28D9]/10 via-transparent to-transparent pointer-events-none"></div>
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#B20710]/10 via-transparent to-transparent pointer-events-none"></div>
 
                 <p
                   style={{
@@ -88,7 +88,7 @@ export const AnnouncementPopup: React.FC<AnnouncementPopupProps> = ({ config, on
                 href={config.actionUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-8 py-3 bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] hover:from-purple-500 hover:to-purple-500 text-white font-bold rounded-lg shadow-lg shadow-[#8B5CF6]/50 transform hover:scale-105 transition-all flex items-center gap-2"
+                className="px-8 py-3 bg-gradient-to-r from-[#E50914] to-[#B20710] hover:from-red-500 hover:to-red-500 text-white font-bold rounded-lg shadow-lg shadow-[#E50914]/50 transform hover:scale-105 transition-all flex items-center gap-2"
               >
                 {config.actionText} <ExternalLink className="w-4 h-4" />
               </a>

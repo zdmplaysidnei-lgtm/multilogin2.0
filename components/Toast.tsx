@@ -39,8 +39,8 @@ export const Toast: React.FC<ToastProps> = ({ title, message, type, onClose }) =
 
   const config = {
     success: { icon: CheckCircle, color: 'text-green-400', bg: 'bg-green-900/90 border-green-500/50', bar: 'bg-green-500' },
-    error: { icon: AlertCircle, color: 'text-[#C4B5FD]', bg: 'bg-[#6D28D9]/90 border-[#8B5CF6]/50', bar: 'bg-[#8B5CF6]' },
-    info: { icon: Info, color: 'text-[#C4B5FD]', bg: 'bg-[#6D28D9]/90 border-[#8B5CF6]/50', bar: 'bg-[#8B5CF6]' }
+    error: { icon: AlertCircle, color: 'text-[#FECACA]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' },
+    info: { icon: Info, color: 'text-[#FECACA]', bg: 'bg-[#B20710]/90 border-[#E50914]/50', bar: 'bg-[#E50914]' }
   }[type];
 
   return (

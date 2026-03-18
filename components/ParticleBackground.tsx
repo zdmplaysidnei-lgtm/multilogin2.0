@@ -95,7 +95,7 @@ const ParticleBackground: React.FC<ParticleBackgroundProps> = ({ effect = 'nebul
         this.speedY = Math.random() * 0.5 + 0.2;
         this.speedX = (Math.random() - 0.5) * 0.2;
         this.opacity = Math.random() * 0.5 + 0.1;
-        const colors = ['#a78bfa', '#8B5CF6', '#7C3AED', '#6D28D9', '#C4B5FD'];
+        const colors = ['#FCA5A5', '#E50914', '#E50914', '#B20710', '#FECACA'];
         this.color = colors[Math.floor(Math.random() * colors.length)];
       }
 
@@ -525,7 +525,7 @@ const ParticleBackground: React.FC<ParticleBackgroundProps> = ({ effect = 'nebul
         this.phase = Math.random() * Math.PI * 2;
         const colorPairs = [
           ['#00FF88', '#00BFFF'],
-          ['#00FFAA', '#8B5CF6'],
+          ['#00FFAA', '#E50914'],
           ['#00CED1', '#FF69B4'],
           ['#39FF14', '#00BFFF'],
           ['#7FFFD4', '#DA70D6']

@@ -11,9 +11,9 @@ export const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> & { 
   const baseStyle = "px-6 py-3 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all duration-300 flex items-center justify-center gap-3 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed select-none";
 
   const variants = {
-    primary: "bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] hover:from-purple-500 hover:to-purple-500 text-white shadow-xl shadow-[#8B5CF6]/30 border border-white/10 active:scale-95",
+    primary: "bg-gradient-to-r from-[#E50914] to-[#B20710] hover:from-red-500 hover:to-red-500 text-white shadow-xl shadow-[#E50914]/30 border border-white/10 active:scale-95",
     secondary: "bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 border border-gray-800 shadow-lg active:scale-95",
-    danger: "bg-purple-900/30 hover:bg-[#8B5CF6] text-[#C4B5FD] hover:text-white border border-[#8B5CF6]/20 shadow-xl active:scale-95",
+    danger: "bg-red-900/30 hover:bg-[#E50914] text-[#FECACA] hover:text-white border border-[#E50914]/20 shadow-xl active:scale-95",
     ghost: "bg-transparent hover:bg-white/5 text-gray-500 hover:text-white"
   };
 
@@ -28,7 +28,7 @@ export const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { lab
   <div className="flex flex-col gap-2 w-full">
     {label && <label className="text-[10px] font-black uppercase text-gray-600 tracking-widest ml-1">{label}</label>}
     <input
-      className={`bg-[#0d0d0d] border border-gray-800 rounded-2xl px-5 py-4 text-white focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] outline-none transition-all placeholder-gray-700 shadow-inner text-sm ${className}`}
+      className={`bg-[#0d0d0d] border border-gray-800 rounded-2xl px-5 py-4 text-white focus:border-[#E50914] focus:ring-1 focus:ring-[#E50914] outline-none transition-all placeholder-gray-700 shadow-inner text-sm ${className}`}
       {...props}
     />
   </div>
@@ -40,7 +40,7 @@ export const Switch: React.FC<{ checked: boolean; onChange: (checked: boolean) =
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className={`w-12 h-7 flex items-center rounded-full p-1 transition-all duration-500 ${checked ? 'bg-[#8B5CF6] shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'bg-gray-800'}`}
+      className={`w-12 h-7 flex items-center rounded-full p-1 transition-all duration-500 ${checked ? 'bg-[#E50914] shadow-[0_0_15px_rgba(229,9,20,0.4)]' : 'bg-gray-800'}`}
     >
       <div className={`bg-white w-5 h-5 rounded-full shadow-lg transform transition-transform duration-500 ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
     </button>
@@ -62,10 +62,10 @@ export const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: stri
       <div className={`${sizes[size]} w-full bg-[#0f0f0f] border border-gray-800 rounded-[40px] shadow-[0_50px_150px_rgba(0,0,0,1)] overflow-hidden flex flex-col max-h-full border-t border-t-white/5`}>
         <div className="flex items-center justify-between px-10 py-8 border-b border-gray-800 bg-white/5">
           <h2 className="text-2xl font-black text-white flex items-center gap-4 uppercase tracking-tighter">
-            <span className="w-1 h-8 bg-[#8B5CF6] rounded-full"></span>
+            <span className="w-1 h-8 bg-[#E50914] rounded-full"></span>
             {title}
           </h2>
-          <button onClick={onClose} className="p-3 bg-white/5 hover:bg-[#8B5CF6] hover:text-white rounded-xl transition-all shadow-lg text-gray-500">
+          <button onClick={onClose} className="p-3 bg-white/5 hover:bg-[#E50914] hover:text-white rounded-xl transition-all shadow-lg text-gray-500">
             <X size={20} />
           </button>
         </div>
