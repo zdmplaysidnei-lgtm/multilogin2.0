@@ -848,8 +848,8 @@ const App: React.FC = () => {
             <ParticleBackground effect={settings?.seasonalEffect} />
             <div className="relative z-10 w-full max-w-md p-10 bg-black/80 border border-red-500/20 rounded-3xl shadow-2xl backdrop-blur-xl animate-fade-in-up">
                <div className="flex flex-col items-center mb-8">
-                  <img src={settings?.logoUrl} className="h-12 mb-4" alt="Logo" />
-                  <h2 className="text-gray-400 text-sm tracking-[0.3em] uppercase font-black">FERRAMENTAS ILIMITADAS</h2>
+                  <h1 className="text-gray-200 text-sm tracking-[0.3em] uppercase font-black">RATEIO FLIX</h1>
+                  <h2 className="text-gray-400 text-sm tracking-[0.3em] uppercase font-black">FERRAMENTAS PREMIUM</h2>
                </div>
                <form onSubmit={handleLogin} className="space-y-6">
                   <Input type="email" placeholder="E-mail" value={loginForm.email} onChange={e => setLoginForm({ ...loginForm, email: e.target.value })} className="bg-white/5 border-white/10" />
