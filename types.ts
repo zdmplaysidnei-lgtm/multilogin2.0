@@ -41,7 +41,7 @@ export interface Profile {
   coverImage: string;
   urls: string[];
   launchMode: 'internal' | 'external';
-  useExternalBrowserUI?: boolean;
+  useExternalBrowserUI?: boolean; // Re-utilizado para Navegador Normal sem App Mode
   useNativeBrowser?: boolean; // Chrome nativo com suporte a DRM (HBO Max, Netflix, etc.)
   accessUrl?: string;
   loginType: 'credentials' | 'cookies' | 'discord' | 'script';

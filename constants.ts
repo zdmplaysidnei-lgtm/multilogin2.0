@@ -39,7 +39,7 @@ export const INITIAL_SETTINGS: AppSettings = {
     enabled: false,
     type: 'text',
     contentUrl: '',
-    textContent: 'Bem-vindo ao Rateio Flix - Ferramentas Premium!',
+    textContent: 'Bem-vindo ao Sidnei - Ferramentas Ilimitadas!',
     size: 'md',
     actionUrl: '',
     actionText: 'Saiba Mais',

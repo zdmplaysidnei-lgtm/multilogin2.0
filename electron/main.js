@@ -27,6 +27,7 @@ const GLOBAL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 
 // 🔥 ARMAZENA PROXIES ANÔNIMOS ATIVOS PARA LIMPEZA
 const activeProxies = new Map();
+let lastRocketoolzId = "hlkenndednhfkekhgcdicdfddnkalmdm"; // Default fallback
 
 // 🔥 ARMAZENA PROCESSOS CHROME NATIVOS ATIVOS
 const activeNativeProcesses = new Map();
@@ -119,33 +120,26 @@ function getExtensionsList() {
     console.log(`🔌 [EXT-RESULTADO] Total: ${verified.length} extensão(ões) verificada(s)`);
     verified.forEach(p => console.log(`  ✅ ${p}`));
 
-    // 🛡️ WINDOWS: Cria junctions (symlinks) para caminhos com espaços
-    // Chrome no Windows pode falhar com --load-extension quando o caminho tem espaços
+    // 🛡️ WINDOWS: Copia extensões para um caminho limpo (sem espaços/caracteres especiais)
+    // Chrome REJEITA --load-extension com junctions (symlinks) ou caminhos com espaços
     if (process.platform === 'win32') {
-        const os = require('os');
-        const tempBase = path.join(os.tmpdir(), 'nebula_extensions');
-        if (!fs.existsSync(tempBase)) fs.mkdirSync(tempBase, { recursive: true });
+        const cleanBase = 'C:\\RocketoolzExt';
+        if (!fs.existsSync(cleanBase)) fs.mkdirSync(cleanBase, { recursive: true });
 
         const finalPaths = verified.map((p, idx) => {
-            if (!p.includes(' ')) return p; // Caminho sem espaços -> OK
-
-            // Cria um junction sem espaços apontando para a extensão
-            const junctionName = `ext_${idx}_${path.basename(p).replace(/[^a-zA-Z0-9_-]/g, '')}`;
-            const junctionPath = path.join(tempBase, junctionName);
+            const extName = `ext${idx}_${path.basename(p).replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            const cleanPath = path.join(cleanBase, extName);
 
             try {
-                // Remove junction antiga se existir
-                if (fs.existsSync(junctionPath)) {
-                    try { fs.unlinkSync(junctionPath); } catch (e) {
-                        try { fs.rmSync(junctionPath, { recursive: true, force: true }); } catch (e2) { }
-                    }
+                // Copia arquivos da extensão para caminho limpo
+                if (fs.existsSync(cleanPath)) {
+                    fs.rmSync(cleanPath, { recursive: true, force: true });
                 }
-                // Cria junction (não precisa de admin no Windows)
-                fs.symlinkSync(p, junctionPath, 'junction');
-                console.log(`🔗 [JUNCTION] ${p} -> ${junctionPath}`);
-                return junctionPath;
+                copyDirSync(p, cleanPath);
+                console.log(`📋 [COPY-EXT] ${p} -> ${cleanPath}`);
+                return cleanPath;
             } catch (e) {
-                console.warn(`⚠️ [JUNCTION] Falha ao criar junction: ${e.message}`);
+                console.warn(`⚠️ [COPY-EXT] Falha ao copiar extensão: ${e.message}`);
                 return p; // fallback ao caminho original
             }
         });
@@ -230,6 +224,137 @@ function getExtensionMeta(extDir, folderName, type) {
             enabled: false,
             manifestVersion: 2
         };
+    }
+}
+
+// 🚀 AUTO-INSTALAÇÃO DE EXTENSÕES NO PERFIL CHROME
+// Copia extensões para Default/Extensions/{id}/{version}/ e registra em Preferences
+// Isso simula uma instalação "tradicional" — extensão carrega nativamente, sem --load-extension
+function autoInstallExtensions(userDataDir) {
+    const crypto = require('crypto');
+    const extensionsList = getExtensionsList();
+    if (extensionsList.length === 0) return [];
+
+    const defaultDir = path.join(userDataDir, 'Default');
+    if (!fs.existsSync(defaultDir)) fs.mkdirSync(defaultDir, { recursive: true });
+
+    const installedIds = [];
+
+    for (const extSourcePath of extensionsList) {
+        try {
+            // Lê o manifest para obter versão e nome
+            const manifestPath = path.join(extSourcePath, 'manifest.json');
+            if (!fs.existsSync(manifestPath)) continue;
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            const version = manifest.version || '1.0';
+            const extName = manifest.name || path.basename(extSourcePath);
+
+            // Gera ID determinístico (32 chars, alphabet a-p) baseado no nome da pasta
+            // Chrome usa SHA256 do public key, mas para unpacked usa o path.
+            // Nós usamos o nome da pasta para garantir consistência entre máquinas.
+            const folderName = path.basename(extSourcePath);
+            const hash = crypto.createHash('sha256').update(folderName).digest('hex');
+            const extId = hash.substring(0, 32).split('').map(c => {
+                const n = parseInt(c, 16);
+                return String.fromCharCode(97 + n); // a=0, b=1, ..., p=15
+            }).join('');
+
+            console.log(`🚀 [AUTO-INSTALL] Instalando "${extName}" com ID: ${extId}`);
+
+            // Copia arquivos para Default/Extensions/{id}/{version}/
+            const targetExtDir = path.join(defaultDir, 'Extensions', extId, version);
+
+            // Se já existe e tem manifest, pula a cópia (já instalada)
+            const targetManifest = path.join(targetExtDir, 'manifest.json');
+            if (!fs.existsSync(targetManifest)) {
+                // Cria diretório e copia todos os arquivos
+                if (!fs.existsSync(targetExtDir)) fs.mkdirSync(targetExtDir, { recursive: true });
+                copyDirSync(extSourcePath, targetExtDir);
+                console.log(`📦 [AUTO-INSTALL] Arquivos copiados para: ${targetExtDir}`);
+            } else {
+                console.log(`✅ [AUTO-INSTALL] "${extName}" já instalada, pulando cópia.`);
+            }
+
+            // Registra no Preferences
+            const prefsPath = path.join(defaultDir, 'Preferences');
+            let prefs = {};
+            if (fs.existsSync(prefsPath)) {
+                try { prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8')); } catch (e) { }
+            }
+
+            if (!prefs.extensions) prefs.extensions = {};
+            if (!prefs.extensions.settings) prefs.extensions.settings = {};
+
+            // Só registra se ainda não existir ou se estiver desabilitada
+            if (!prefs.extensions.settings[extId] || prefs.extensions.settings[extId].state === 0) {
+                prefs.extensions.settings[extId] = {
+                    active_permissions: {
+                        api: manifest.permissions || [],
+                        explicit_host: manifest.host_permissions || [],
+                        manifest_permissions: [],
+                        scriptable_host: manifest.host_permissions || []
+                    },
+                    commands: {},
+                    content_settings: [],
+                    creation_flags: 1,
+                    from_bookmark: false,
+                    from_webstore: false,
+                    granted_permissions: {
+                        api: manifest.permissions || [],
+                        explicit_host: manifest.host_permissions || [],
+                        manifest_permissions: [],
+                        scriptable_host: manifest.host_permissions || []
+                    },
+                    incognito_content_settings: [],
+                    incognito_preferences: {},
+                    install_time: Date.now().toString(),
+                    location: 4, // EXTERNAL_PREF
+                    manifest: manifest,
+                    path: targetExtDir,
+                    state: 1, // ENABLED
+                    was_installed_by_default: false,
+                    was_installed_by_oem: false,
+                    withholding_permissions: false
+                };
+
+                console.log(`📝 [AUTO-INSTALL] Registrada em Preferences: ${extId}`);
+            }
+
+            // Habilita developer mode para que extensões externas sejam aceitas
+            if (!prefs.extensions.ui) prefs.extensions.ui = {};
+            prefs.extensions.ui.developer_mode = true;
+
+            fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
+
+            // Remove Secure Preferences para evitar hash validation
+            const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+            if (fs.existsSync(securePrefsPath)) {
+                try { fs.unlinkSync(securePrefsPath); } catch (e) { }
+            }
+
+            installedIds.push(extId);
+            console.log(`✅ [AUTO-INSTALL] "${extName}" (${extId}) instalada com sucesso!`);
+
+        } catch (err) {
+            console.error(`❌ [AUTO-INSTALL] Erro ao instalar extensão:`, err.message);
+        }
+    }
+
+    return installedIds;
+}
+
+// Helper: copia diretório recursivamente
+function copyDirSync(src, dest) {
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+            copyDirSync(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
     }
 }
 
@@ -427,8 +552,281 @@ function createFloatingButtons(profileId) {
 // 🔥 FUNÇÃO DE PROTEÇÃO PARA SER INJETADA NO NAVEGADOR
 async function injectProtection(targetPage) {
     try {
-        // 1. Injeta script que roda ANTES de qualquer outro script da página
-        await targetPage.evaluateOnNewDocument(() => {
+        // 🔥 LISTENER INTELIGENTE: Intercepta payloads de sessão e injeta cookies via CDP
+        targetPage.on('console', async (msg) => {
+            const text = msg.text();
+            console.log('🚀 [BROWSER]', text);
+
+            // Intercepta o payload de sessão do Rocketoolz (JÁ DECODIFICADO pela extensão)
+            if (text.startsWith('__RTZ_TARGET__:')) {
+                // Salva a URL de destino
+                targetPage.__rtzTargetUrl = text.replace('__RTZ_TARGET__:', '').trim();
+                console.log('🎯 [TARGET] URL de destino salva:', targetPage.__rtzTargetUrl);
+            }
+
+            if (text.startsWith('__RTZ_SESSION__:')) {
+                try {
+                    const jsonStr = text.replace('__RTZ_SESSION__:', '');
+                    const sessionData = JSON.parse(jsonStr);
+                    console.log('🍪 [COOKIES] Dados JÁ DECODIFICADOS pela extensão! Campos:', Object.keys(sessionData));
+
+                    // 1. Determina a URL de destino PRIMEIRO
+                    const finalUrl = sessionData.url || sessionData.redirectUrl || sessionData.targetUrl || targetPage.__rtzTargetUrl;
+                    if (!finalUrl) {
+                        console.log('⚠️ [COOKIES] Nenhuma URL de destino encontrada!');
+                        return;
+                    }
+                    console.log(`🍪 [COOKIES] URL de destino: ${finalUrl}`);
+
+                    // 2. Navega para a URL de destino ANTES de injetar cookies
+                    // Isso garante que o domínio esteja correto para localStorage
+                    console.log(`🍪 [COOKIES] Navegando para domínio de destino primeiro...`);
+                    await targetPage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+                    // 3. Cria sessão CDP para setar cookies
+                    const client = await targetPage.target().createCDPSession();
+
+                    // Helper: determina a URL base para o cookie (necessário para Network.setCookie)
+                    const getCookieUrl = (cookie) => {
+                        const protocol = cookie.secure ? 'https' : 'http';
+                        const domain = (cookie.domain || '').replace(/^\./, '');
+                        return `${protocol}://${domain}${cookie.path || '/'}`;
+                    };
+
+                    // Helper: mapeia sameSite do formato extensão para CDP
+                    const mapSameSite = (ss) => {
+                        if (!ss) return undefined;
+                        const val = String(ss).toLowerCase();
+                        if (val === 'no_restriction' || val === 'none') return 'None';
+                        if (val === 'lax') return 'Lax';
+                        if (val === 'strict') return 'Strict';
+                        return undefined;
+                    };
+
+                    // 4. Injeta cookies se existir campo 'a' (array de cookies)
+                    if (sessionData.a && Array.isArray(sessionData.a)) {
+                        // Limpa cookies existentes do domínio para evitar conflitos
+                        try {
+                            const urlObj = new URL(finalUrl);
+                            await client.send('Network.clearBrowserCookies');
+                            console.log('🍪 [COOKIES] Cookies do browser limpos antes da injeção');
+                        } catch (e) { }
+
+                        console.log(`🍪 [COOKIES] Injetando ${sessionData.a.length} cookies...`);
+                        let successCount = 0;
+                        let failCount = 0;
+                        for (const cookie of sessionData.a) {
+                            try {
+                                const cookieUrl = getCookieUrl(cookie);
+                                const cookieParams = {
+                                    name: cookie.name,
+                                    value: cookie.value,
+                                    domain: cookie.domain,
+                                    path: cookie.path || '/',
+                                    url: cookieUrl, // 🔑 CRITICAL: CDP precisa da URL para associar o cookie
+                                };
+                                if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
+                                if (cookie.secure) cookieParams.secure = true;
+                                if (cookie.httpOnly) cookieParams.httpOnly = true;
+                                const mappedSameSite = mapSameSite(cookie.sameSite);
+                                if (mappedSameSite) cookieParams.sameSite = mappedSameSite;
+                                const result = await client.send('Network.setCookie', cookieParams);
+                                if (result.success !== false) successCount++;
+                                else failCount++;
+                            } catch (cookieErr) {
+                                failCount++;
+                                console.log(`⚠️ [COOKIES] Erro ao setar cookie ${cookie.name}:`, cookieErr.message);
+                            }
+                        }
+                        console.log(`🍪 [COOKIES] Resultado: ${successCount} OK, ${failCount} falhas de ${sessionData.a.length} total`);
+                    }
+
+                    // 5. Injeta localStorage se existir campo 'ls'
+                    if (sessionData.ls && typeof sessionData.ls === 'object') {
+                        console.log('📦 [LOCALSTORAGE] Injetando localStorage...');
+                        const lsEntries = Object.entries(sessionData.ls);
+                        for (const [key, value] of lsEntries) {
+                            try {
+                                await targetPage.evaluate((k, v) => {
+                                    try { localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) { }
+                                }, key, value);
+                            } catch (e) { }
+                        }
+                        console.log(`📦 [LOCALSTORAGE] ${lsEntries.length} itens injetados`);
+                    }
+
+                    // 6. Injeta sessionStorage se existir campo 'ss'
+                    if (sessionData.ss && typeof sessionData.ss === 'object') {
+                        console.log('📦 [SESSIONSTORAGE] Injetando sessionStorage...');
+                        const ssEntries = Object.entries(sessionData.ss);
+                        for (const [key, value] of ssEntries) {
+                            try {
+                                await targetPage.evaluate((k, v) => {
+                                    try { sessionStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) { }
+                                }, key, value);
+                            } catch (e) { }
+                        }
+                    }
+
+                    await client.detach();
+
+                    // 7. RECARREGA a página para que o servidor veja os cookies autenticados
+                    console.log(`🔄 [RELOAD] Recarregando ${finalUrl} com cookies injetados...`);
+                    await targetPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                    console.log('✅ [COOKIES] Sessão injetada e página recarregada com sucesso!');
+
+                } catch (err) {
+                    console.error('❌ [COOKIES] Erro ao processar sessão:', err.message);
+                }
+            }
+        });
+        // INTERCEPTOR DE RESPOSTAS: Captura o payload da API e decodifica via extensao
+        targetPage.on('response', async (response) => {
+            const url = response.url();
+            if (!url.includes('fetch_session_data.php')) return;
+
+            try {
+                const text = await response.text();
+                console.log('[API] Resposta capturada de fetch_session_data.php! Tamanho:', text.length);
+
+                // Extrai o payload
+                let payload = text.trim();
+                console.log('[API] Payload raw, primeiros 80 chars:', payload.substring(0, 80));
+
+                // Obtem URL do target
+                const tgtUrl = targetPage.__rtzTargetUrl;
+                console.log('[API] Target URL salva:', tgtUrl);
+
+                // Usa CDP para acessar o service worker da extensao
+                // Usa Puppeteer para acessar a background page da extensao
+                const browser = targetPage.browser();
+                const allTargets = browser.targets();
+                const extTarget = allTargets.find(t => t.type() === 'background_page');
+
+                if (extTarget) {
+                    console.log('[API] Background page encontrada!', extTarget.url());
+                    const extCdp = await extTarget.createCDPSession();
+
+                    // Busca a ENCRYPTION_KEY no contexto da extensao
+                    // Busca a ENCRYPTION_KEY no contexto da extensao
+                    const keyResult = await extCdp.send('Runtime.evaluate', {
+                        expression: "(function(){try{var keys=[];if(typeof vmu!=='undefined'){for(var k in vmu){if(typeof vmu[k]==='string'&&vmu[k].length>5&&vmu[k].length<100){keys.push(k+'='+vmu[k].substring(0,30))}}};if(typeof vmX_2dc1e7!=='undefined'){for(var k in vmX_2dc1e7){if(typeof vmX_2dc1e7[k]==='string'&&vmX_2dc1e7[k].length>5&&vmX_2dc1e7[k].length<100){keys.push('vmX.'+k+'='+vmX_2dc1e7[k].substring(0,30))}}};return JSON.stringify({keys:keys.slice(0,50)})}catch(e){return JSON.stringify({error:e.message})}})()",
+                        returnByValue: true
+                    });
+                    console.log('[API] Strings no VM:', keyResult?.result?.value);
+
+                    // Tenta chamar parseSessionPayload no contexto do service worker
+                    const payloadForEval = payload.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+                    const decryptResult = await extCdp.send('Runtime.evaluate', {
+                        expression: "(function(){try{var p='" + payloadForEval + "';if(p.startsWith('session_paste ')){p=p.substring(14).trim()};if(typeof CryptoJS!=='undefined'){var ek=null;if(typeof ENCRYPTION_KEY!=='undefined')ek=ENCRYPTION_KEY;else if(typeof vmu!=='undefined'&&vmu.ENCRYPTION_KEY)ek=vmu.ENCRYPTION_KEY;else if(typeof vmX_2dc1e7!=='undefined'&&vmX_2dc1e7.ENCRYPTION_KEY)ek=vmX_2dc1e7.ENCRYPTION_KEY;if(ek){var d=CryptoJS.AES.decrypt(p,ek).toString(CryptoJS.enc.Utf8);if(d&&d.length>0)return JSON.stringify({decoded:JSON.parse(d),method:'aes',keyUsed:ek.substring(0,10)})}};try{var b=atob(p);if(b.indexOf('{')===0)return JSON.stringify({decoded:JSON.parse(b),method:'b64'})}catch(e){};return JSON.stringify({error:'no_decrypt',hasCryptoJS:typeof CryptoJS!=='undefined',hasEK:typeof ENCRYPTION_KEY!=='undefined'})}catch(e){return JSON.stringify({error:e.message})}})()",
+                        returnByValue: true
+                    });
+
+                    console.log('[API] Resultado da decodificacao:', decryptResult?.result?.value?.substring(0, 300));
+
+                    // Processa o resultado
+                    if (decryptResult?.result?.value) {
+                        try {
+                            const result = JSON.parse(decryptResult.result.value);
+                            if (result.decoded) {
+                                const sessionData = result.decoded;
+                                console.log('[COOKIES] Dados decodificados via extensao! Metodo:', result.method);
+                                console.log('[COOKIES] Campos:', Object.keys(sessionData));
+
+                                // Cria sessao CDP na pagina
+                                const client = await targetPage.target().createCDPSession();
+
+                                // Determina URL de destino
+                                const finalUrl = sessionData.url || sessionData.redirectUrl || tgtUrl;
+
+                                // Helper: determina URL para CDP setCookie
+                                const getCookieUrl2 = (cookie) => {
+                                    const protocol = cookie.secure ? 'https' : 'http';
+                                    const domain = (cookie.domain || '').replace(/^\./, '');
+                                    return `${protocol}://${domain}${cookie.path || '/'}`;
+                                };
+
+                                // Helper: mapeia sameSite
+                                const mapSameSite2 = (ss) => {
+                                    if (!ss) return undefined;
+                                    const val = String(ss).toLowerCase();
+                                    if (val === 'no_restriction' || val === 'none') return 'None';
+                                    if (val === 'lax') return 'Lax';
+                                    if (val === 'strict') return 'Strict';
+                                    return undefined;
+                                };
+
+                                // Navega para o destino PRIMEIRO
+                                if (finalUrl) {
+                                    console.log('[COOKIES] Navegando para destino antes de injetar:', finalUrl);
+                                    targetPage.__rtzRedirected = true;
+                                    await targetPage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                                }
+
+                                // Injeta cookies
+                                if (sessionData.a && Array.isArray(sessionData.a)) {
+                                    console.log('[COOKIES] Injetando ' + sessionData.a.length + ' cookies via CDP...');
+                                    for (const cookie of sessionData.a) {
+                                        try {
+                                            const cookieUrl = getCookieUrl2(cookie);
+                                            const cookieParams = {
+                                                name: cookie.name,
+                                                value: cookie.value,
+                                                domain: cookie.domain,
+                                                path: cookie.path || '/',
+                                                url: cookieUrl,
+                                            };
+                                            if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
+                                            if (cookie.secure) cookieParams.secure = true;
+                                            if (cookie.httpOnly) cookieParams.httpOnly = true;
+                                            const mapped = mapSameSite2(cookie.sameSite);
+                                            if (mapped) cookieParams.sameSite = mapped;
+                                            await client.send('Network.setCookie', cookieParams);
+                                        } catch (cookieErr) {
+                                            console.log('[COOKIES] Erro cookie ' + cookie.name + ': ' + cookieErr.message);
+                                        }
+                                    }
+                                    console.log('[COOKIES] Cookies injetados com sucesso!');
+                                }
+
+                                // Injeta localStorage
+                                if (sessionData.ls && typeof sessionData.ls === 'object') {
+                                    for (const [lsKey, lsVal] of Object.entries(sessionData.ls)) {
+                                        try {
+                                            await targetPage.evaluate((k2, v2) => {
+                                                try { localStorage.setItem(k2, typeof v2 === 'string' ? v2 : JSON.stringify(v2)); } catch (e) { }
+                                            }, lsKey, lsVal);
+                                        } catch (e) { }
+                                    }
+                                }
+
+                                await client.detach();
+
+                                // Recarrega para o servidor ver os cookies
+                                if (finalUrl) {
+                                    console.log('[COOKIES] Recarregando com cookies injetados...');
+                                    await targetPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                                    console.log('[COOKIES] ✅ Sessão restaurada com sucesso!');
+                                }
+                                return;
+                            } else {
+                                console.log('[API] Decodificacao falhou:', result.error || 'sem decoded');
+                            }
+                        } catch (parseErr) {
+                            console.log('[API] Erro ao parsear resultado:', parseErr.message);
+                        }
+                    }
+
+                    try { await extCdp.detach(); } catch (e) { }
+                } else {
+                    console.log('[API] Nenhuma background page encontrada!');
+                    console.log('[API] Targets:', allTargets.map(t => t.type + ':' + (t.url || '').substring(0, 60)).join(', '));
+                }
+            } catch (err) {
+                console.error('[API] Erro ao processar resposta:', err.message);
+            }
+        });
+        const protectionScript = () => {
             // 🔒 BLOQUEIA ATALHOS DE DEVTOOLS
             window.addEventListener('keydown', function (e) {
                 if (e.key === 'F12' ||
@@ -442,7 +840,6 @@ async function injectProtection(targetPage) {
             // 🖱️ MENU DE CONTEXTO PERSONALIZADO (sem "Inspecionar")
             window.addEventListener('contextmenu', function (e) {
                 e.preventDefault(); e.stopPropagation();
-                // Salva texto selecionado ANTES do menu (clicar no menu deseleciona)
                 var savedSel = getSelection().toString();
                 var savedEl = document.activeElement;
                 var old = document.getElementById('__cctx'); if (old) old.remove();
@@ -461,27 +858,160 @@ async function injectProtection(targetPage) {
                 setTimeout(function () { document.addEventListener('click', cl, true) }, 10);
             }, true);
 
+            // 🔥 LISTENER: Captura dados decodificados pela extensão (via postMessage do content-script bridge)
+            window.addEventListener('message', function (event) {
+                if (event.source === window && event.data && event.data.type === 'RTZ_DECODED_SESSION') {
+                    console.log('[BRIDGE] Dados decodificados recebidos da extensão!');
+                    try {
+                        // Emite __RTZ_SESSION__ para o Node.js interceptar via console listener
+                        console.log('__RTZ_SESSION__:' + JSON.stringify(event.data.data));
+                    } catch (e) {
+                        console.log('[BRIDGE] Erro ao serializar:', e.message);
+                    }
+                }
+            });
+
             // 🔒 INTERCEPTA POPUPS: Navega na mesma janela
+            var _whiteList = [
+                'rocketoolz.com', 'digitavision.com', 'khantoolsprovider.com', 'khuramtools.com',
+                'digitalgrouptools.com', 'noxtools.com', 'seobdtools.com', 'brandseotools.com',
+                'azadseo.com', 'hubskit.com', 'trumpseotools.com', 'toolcookies.com',
+                'greentoolz.com', 'nomangraphics.com', 'rateioflix.com', 'rateioflix-ferramentas.com'
+            ];
+            var _allowNewWindow = _whiteList.some(function (d) {
+                return location.hostname === d || location.hostname.endsWith('.' + d);
+            });
+
+            console.log("🛡️ [PROTEÇÃO] Hostname:", location.hostname, "Permitir popups:", _allowNewWindow);
+
             var _wo = window.open;
             window.open = function (u, t, f) {
+                if (_allowNewWindow) {
+                    console.log("🔓 [PROTEÇÃO] window.open permitido para:", u);
+                    return _wo.call(window, u, t, f);
+                }
+                console.warn("🔒 [PROTEÇÃO] window.open interceptado para:", u, "- Redirecionando na mesma aba.");
                 if (u && u !== 'about:blank' && u !== '' && !u.startsWith('javascript:')) { location.href = u; return window; }
                 return _wo.call(window, u, t, f);
             };
+
             document.addEventListener('click', function (e) {
+                if (_allowNewWindow) return; // Deixa links _blank abrir normalmente nos sites da whitelist
                 var a = e.target.closest ? e.target.closest('a[target="_blank"]') : null;
-                if (a && a.href && !a.href.startsWith('javascript:')) { e.preventDefault(); e.stopPropagation(); location.href = a.href; }
+                if (a && a.href && !a.href.startsWith('javascript:')) {
+                    console.warn("🔒 [PROTEÇÃO] Link _blank interceptado:", a.href);
+                    e.preventDefault(); e.stopPropagation(); location.href = a.href;
+                }
             }, true);
 
-            // Esconde botões de revelar senha em sites de login
+            // 🔥 INTERCEPTOR DE MENSAGENS CHROME - Captura cookies decodificados pela extensão
+            if (window.chrome && window.chrome.runtime && window.chrome.runtime.sendMessage) {
+                var _originalSendMessage = window.chrome.runtime.sendMessage;
+                window.chrome.runtime.sendMessage = function () {
+                    var args = Array.from(arguments);
+                    var msg = args[0];
+                    console.log("🔌 [EXT] sendMessage action:", msg && msg.action);
+
+                    // Intercepta a chamada PROCESS_SESSION com dados JÁ DECODIFICADOS pela extensão
+                    if (msg && msg.action === 'PROCESS_SESSION') {
+                        console.log("🔌 [EXT] PROCESS_SESSION capturado! Emitindo para Node.js via CDP...");
+                        // Emite o sinal com os dados decodificados que a extensão preparou
+                        try {
+                            console.log('__RTZ_SESSION__:' + JSON.stringify(msg));
+                        } catch (e) {
+                            console.log('__RTZ_SESSION_RAW__:' + (typeof msg === 'string' ? msg : 'non-serializable'));
+                        }
+                    }
+
+                    // Deixa a extensão continuar normalmente (mesmo que chrome.cookies falhe)
+                    try {
+                        return _originalSendMessage.apply(window.chrome.runtime, args);
+                    } catch (e) {
+                        console.log("🔌 [EXT] sendMessage falhou (esperado no Electron):", e.message);
+                    }
+                };
+            }
+
             var st = document.createElement('style');
             st.innerHTML = '[class*="toggle-password"],[class*="show-password"],[class*="password-toggle"],[class*="reveal-password"],[class*="pwd-toggle"],[type="password"]+button,[type="password"]+span,[type="password"]+div>button,[class*="eye"]:not(input){display:none!important;visibility:hidden!important;pointer-events:none!important}';
             if (document.head) document.head.appendChild(st); else document.addEventListener('DOMContentLoaded', function () { document.head.appendChild(st); });
 
-            // Anti-Debugger
-            setInterval(function () { (function () { (function a() { try { (function b(i) { if (('' + i / i).length !== 1 || i % 20 === 0) (function () { }).constructor('debugger')(); else debugger; b(++i) })(0) } catch (e) { setTimeout(a, 50) } })() })() }, 1000);
-        });
+            // Polyfill para extensão removido para manter a funcionalidade original da extensão manual
+        };
+
+        // 1. Injeta script que roda ANTES de qualquer outro script da página (para futuras navegações)
+        await targetPage.evaluateOnNewDocument(protectionScript);
+
+        // 2. Tenta injetar no documento atual também (caso a página já tenha começado a carregar)
+        try {
+            await targetPage.evaluate(protectionScript);
+        } catch (err) {
+            // Ignora erro se não puder avaliar
+        }
     } catch (e) {
         console.error("Erro ao injetar proteção:", e.message);
+    }
+}
+
+// 🔥 FUNÇÃO PARA INJETAR MONITOR DE DOWNLOADS VIA CDP NO PUPPETEER
+async function attachCDPDownloadListener(browser) {
+    try {
+        // Encontra o alvo (target) que é do tipo 'browser'
+        const browserTarget = browser.targets().find(t => t.type() === 'browser');
+        if (!browserTarget) {
+            console.warn(`⚠️ [CDP] Target do tipo 'browser' não encontrado para monitoramento de downloads.`);
+            return;
+        }
+
+        const cdpSession = await browserTarget.createCDPSession();
+
+        await cdpSession.send('Browser.setDownloadBehavior', {
+            behavior: 'allowAndName',
+            downloadPath: app.getPath('downloads'),
+            eventsEnabled: true
+        });
+
+        const downloadMap = new Map();
+
+        cdpSession.on('Browser.downloadWillBegin', (event) => {
+            const fileName = event.suggestedFilename || 'Arquivo';
+            downloadMap.set(event.guid, fileName);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('download-progress', {
+                    profileId: 'global',
+                    fileName,
+                    progress: 0,
+                    state: 'downloading',
+                    totalBytes: 0,
+                    savePath: event.url
+                });
+            }
+        });
+
+        cdpSession.on('Browser.downloadProgress', (event) => {
+            const fileName = downloadMap.get(event.guid) || 'Arquivo';
+            const pct = event.totalBytes > 0 ? Math.round((event.receivedBytes / event.totalBytes) * 100) : 0;
+            let stateStr = 'downloading';
+            if (event.state === 'completed') stateStr = 'success';
+            if (event.state === 'canceled') stateStr = 'error';
+
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('download-progress', {
+                    profileId: 'global',
+                    fileName,
+                    progress: pct,
+                    state: stateStr,
+                    totalBytes: event.totalBytes,
+                    savePath: ''
+                });
+            }
+            if (event.state !== 'inProgress') {
+                setTimeout(() => downloadMap.delete(event.guid), 10000);
+            }
+        });
+        console.log(`📥 [CDP] Monitor de Downloads ativado para o navegador externo!`);
+    } catch (e) {
+        console.warn(`⚠️ [CDP] Falha ao ativar monitor de downloads:`, e.message);
     }
 }
 
@@ -520,8 +1050,7 @@ function registerIPCHandlers() {
             prefs.autofill.credit_card_enabled = false;
             prefs.autofill.profile_enabled = false;
 
-            // 🧩 HABILITA DEVELOPER MODE para que --load-extension funcione
-            // Chrome moderno ignora silenciosamente extensões sem isso
+            // 🧩 HABILITA DEVELOPER MODE
             if (profile.enableExtensions) {
                 if (!prefs.extensions) prefs.extensions = {};
                 if (!prefs.extensions.ui) prefs.extensions.ui = {};
@@ -531,26 +1060,39 @@ function registerIPCHandlers() {
 
             fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
 
-            // 🔐 SEMPRE deleta Secure Preferences para forçar Chrome a aceitar nossas mudanças
-            // Chrome valida prefs com hash no Secure Preferences - se não bater, REVERTE tudo!
-            const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
-            if (fs.existsSync(securePrefsPath)) {
-                try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para forçar aceitação`); } catch (e) { }
+            // 🔐 Deleta Secure Preferences para forçar aceitação (SOMENTE SE NÃO FOR MODO NAVEGADOR NORMAL)
+            // Modo normal mantém as extensões manuais do usuário!
+            if (!profile.useExternalBrowserUI) {
+                const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+                if (fs.existsSync(securePrefsPath)) {
+                    try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para forçar aceitação`); } catch (e) { }
+                }
             }
 
-            // 🔒 WINDOWS REGISTRY: Desabilita Password Manager via Policy
-            // IMPORTANTE: NÃO usar DeveloperToolsAvailability aqui! Ele desabilita o DevTools Protocol
-            // que o Puppeteer precisa para controlar o Chrome, quebrando TUDO.
+            // 🔒 WINDOWS REGISTRY: Políticas do Chrome
             if (process.platform === 'win32') {
                 try {
                     const { execSync } = require('child_process');
                     const regPath = 'HKCU\\Software\\Policies\\Google\\Chrome';
+
+                    // 1. SEMPRE desabilita o Password Manager e Autofill via policy (Remove a "Chavinha" da barra de endereço)
                     execSync(`reg add "${regPath}" /v PasswordManagerEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
                     execSync(`reg add "${regPath}" /v AutofillCreditCardEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
                     execSync(`reg add "${regPath}" /v AutofillAddressEnabled /t REG_DWORD /d 0 /f`, { stdio: 'ignore' });
-                    // 🔧 CLEANUP: Remove DeveloperToolsAvailability que pode ter sido criado antes
-                    execSync(`reg delete "${regPath}" /v DeveloperToolsAvailability /f`, { stdio: 'ignore' });
-                    console.log(`🔒 [REGISTRY] Policies do Chrome aplicadas via Registro do Windows`);
+
+                    if (profile.enableExtensions || profile.useExternalBrowserUI) {
+                        try {
+                            execSync(`reg delete "${regPath}" /v DeveloperToolsAvailability /f`, { stdio: 'ignore' });
+                            execSync(`reg delete "${regPath}" /v ExtensionInstallBlocklist /f`, { stdio: 'ignore' });
+                            console.log(`🔓 [REGISTRY] Policy DeveloperToolsAvailability removida para permitir extensões`);
+                        } catch (e) {
+                            // Chave g/v pode não existir, tudo bem
+                        }
+                    } else {
+                        // 🔒 SEM EXTENSÕES: Desabilita Developer Tools via Policy
+                        execSync(`reg add "${regPath}" /v DeveloperToolsAvailability /t REG_DWORD /d 2 /f`, { stdio: 'ignore' });
+                        console.log(`🔒 [REGISTRY] Policies do Chrome aplicadas via Registro do Windows`);
+                    }
                 } catch (regErr) {
                     console.warn(`⚠️ [REGISTRY] Erro ao definir policies:`, regErr.message);
                 }
@@ -559,7 +1101,7 @@ function registerIPCHandlers() {
             // 🔒 CHROME ENTERPRISE POLICY (LINUX/MAC): Desabilita DevTools completamente
             // Isso remove "Inspecionar" do menu de contexto, bloqueia F12, e Ctrl+Shift+I
             // DeveloperToolsAvailability: 0 = permitido, 1 = permitido em extensões, 2 = desabilitado
-            if (!profile.enableExtensions) {
+            if (!profile.enableExtensions && !profile.useExternalBrowserUI) {
                 try {
                     // Método 1: Via Managed Preferences (funciona no Chromium)
                     const policiesDir = path.join(userDataDir, 'policies');
@@ -586,6 +1128,33 @@ function registerIPCHandlers() {
                     console.log(`🔒 [POLICY] DevTools desabilitado via Chrome Enterprise Policy`);
                 } catch (policyErr) {
                     console.warn(`⚠️ [POLICY] Erro ao definir policy:`, policyErr.message);
+                }
+            } else {
+                // 🔓 EXTENSÕES ATIVADAS: Remove policies restritivas que bloqueiam --load-extension
+                // DeveloperToolsAvailability: 2 impede extensões unpacked de carregar!
+                try {
+                    const policyJsonPath = path.join(userDataDir, 'policies', 'managed', 'policy.json');
+                    if (fs.existsSync(policyJsonPath)) {
+                        // Reescreve SEM DeveloperToolsAvailability (permite extensões)
+                        fs.writeFileSync(policyJsonPath, JSON.stringify({
+                            PasswordManagerEnabled: false,
+                            AutofillCreditCardEnabled: false,
+                            AutofillAddressEnabled: false
+                        }, null, 2));
+                        console.log(`🔓 [POLICY] Policy atualizada: DeveloperToolsAvailability removido (extensões)`)
+                    }
+                    const masterPrefsPath = path.join(userDataDir, 'master_preferences');
+                    if (fs.existsSync(masterPrefsPath)) {
+                        fs.unlinkSync(masterPrefsPath);
+                    }
+                    // Remove devtools.disabled do Preferences
+                    if (prefs.devtools) {
+                        delete prefs.devtools.disabled;
+                        fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2));
+                    }
+                    console.log(`🔓 [POLICY] Policies restritivas removidas para permitir extensões`);
+                } catch (e) {
+                    console.warn(`⚠️ [POLICY] Erro ao limpar policies:`, e.message);
                 }
             }
 
@@ -643,6 +1212,8 @@ function registerIPCHandlers() {
                 'heygen.com', 'app.heygen.com',   // HeyGen - OAuth (Google/Apple/SSO/Email)
                 // 🔥 SITES COM PROTEÇÃO ANTI-BOT AVANÇADA (pulam pré-login)
                 'dankicode.com', 'cursos.dankicode.com',  // DankiCode - Anti-bot
+                // 🚀 SITES COM EXTENSÃO DEDICADA (a extensão cuida da autenticação)
+                'rocketoolz.com', 'dash.rocketoolz.com',  // Rocketoolz - autenticação via extensão
             ];
 
             const targetUrlLower = targetUrls[0].toLowerCase();
@@ -1139,15 +1710,15 @@ function registerIPCHandlers() {
 
                     console.log(`✅ [PRÉ-LOGIN] Login silencioso concluído! Fechando headless...`);
 
-                    // Fecha o browser headless (cookies já estão salvos no userDataDir)
-                    await headlessBrowser.close();
+                    // Fecha o browser headless com timeout para evitar travamentos
+                    try { await Promise.race([headlessBrowser.close(), new Promise(r => setTimeout(r, 3000))]); } catch (e) { }
 
                 } catch (loginErr) {
                     console.warn(`⚠️ [PRÉ-LOGIN] Erro no login silencioso (continuando mesmo assim):`, loginErr.message);
                     // 🔥 IMPORTANTE: Garante que o browser headless seja fechado mesmo em caso de erro
                     try {
                         if (headlessBrowser && headlessBrowser.isConnected()) {
-                            await headlessBrowser.close();
+                            await Promise.race([headlessBrowser.close(), new Promise(r => setTimeout(r, 3000))]);
                             console.log(`🔒 [PRÉ-LOGIN] Browser headless fechado após erro`);
                         }
                     } catch (closeErr) {
@@ -1171,7 +1742,6 @@ function registerIPCHandlers() {
                 '--autoplay-policy=no-user-gesture-required',
                 `--user-agent=${GLOBAL_UA}`,
                 // 🔒 FLAGS DE PROTEÇÃO
-                '--disable-dev-tools',                    // Desabilita DevTools (F12)
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
                 '--disable-features=TranslateUI,PasswordManagerOnboarding,PasswordManagerBubble,PasswordLeakDetection,PasswordCheck,PasswordReuse,PasswordSaving,IsolateOrigins,site-per-process',
@@ -1186,18 +1756,13 @@ function registerIPCHandlers() {
                 '--disable-setuid-sandbox',
             ];
 
-            // 🧩 CARREGA EXTENSÕES SOMENTE SE O PERFIL TIVER enableExtensions ATIVADO
+            // 🧩 CARREGA EXTENSÕES VIA --load-extension (se ativado)
             const shouldLoadExtensions = profile.enableExtensions === true;
             let extensionsList = [];
             if (shouldLoadExtensions) {
                 extensionsList = getExtensionsList();
                 if (extensionsList.length > 0) {
-                    // Caminhos já estão no formato curto (sem espaços) graças ao getExtensionsList()
-                    const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
-
-                    chromeArgs.push(extensionsArg);
-                    console.log(`🔌 [NATIVO] Preparando ${extensionsList.length} extensão(ões) para carregar`);
-                    console.log(`🧩 [DEBUG-RAW] extensionsArg: |${extensionsArg}|`);
+                    console.log(`🔌 [NATIVO] ${extensionsList.length} extensão(ões) encontrada(s)`);
                 }
             }
 
@@ -1205,8 +1770,12 @@ function registerIPCHandlers() {
                 chromeArgs.push(`--proxy-server=${proxyUrl}`);
             }
 
+            if (!profile.enableExtensions && !profile.useExternalBrowserUI) {
+                chromeArgs.push('--disable-dev-tools');
+            }
+
             // 🔥 SMART URLs: Se tem cookies E a URL é de login, usa a URL base (dashboard)
-            const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso'];
+            const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso', '/newlogin'];
             let smartUrls = targetUrls.map(url => {
                 const hasProfileCookies = profile.cookies && profile.cookies.trim();
                 if (hasProfileCookies && loginPaths.some(lp => url.toLowerCase().includes(lp))) {
@@ -1224,19 +1793,20 @@ function registerIPCHandlers() {
             if (shouldLoadExtensions && extensionsList.length > 0) {
                 chromeArgs.push(...smartUrls);
                 console.log(`🧩 [NATIVO] Modo toolbar ativado (extensões visíveis)`);
-            } else if (smartUrls.length === 1) {
+            } else if (smartUrls.length === 1 && !profile.useExternalBrowserUI) {
                 chromeArgs.push(`--app=${smartUrls[0]}`);
-            } else if (smartUrls.length > 1) {
+            } else if (smartUrls.length >= 1) {
                 chromeArgs.push(...smartUrls);
             }
 
             let browser;
+            console.log(`🔍 [DEBUG] shouldLoadExtensions=${shouldLoadExtensions}, extensionsList.length=${extensionsList.length}`);
             if (shouldLoadExtensions && extensionsList.length > 0) {
-                // 🚀 PUPPETEER.LAUNCH COM EXTENSÕES (método oficial)
-                // Usa ignoreDefaultArgs para impedir que o Puppeteer adicione --disable-extensions
-                const extPathsJoined = extensionsList.join(',');
-                console.log(`🚀 [NATIVO] Lançando via puppeteer.launch() COM suporte a extensões...`);
-                console.log(`🔌 [NATIVO] Extensões: ${extPathsJoined}`);
+                // 🚀 PUPPETEER.LAUNCH com --enable-unsafe-extension-debugging
+                // Chrome 137+ removeu --load-extension. A alternativa oficial é CDP Extensions.loadUnpacked
+                // que só funciona quando o Puppeteer gerencia o processo Chrome diretamente (não via connect)
+                console.log(`🚀 [NATIVO] Lançando Chrome com suporte a CDP Extensions`);
+                console.log(`🔌 [NATIVO] Extensões a carregar: ${JSON.stringify(extensionsList)}`);
 
                 browser = await puppeteer.launch({
                     executablePath,
@@ -1244,51 +1814,32 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    // 🔑 CRUCIAL: Remove bloqueios e flags que causam barra amarela
+                    // Remove flags que bloqueiam extensões
                     ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
                     args: [
                         ...chromeArgs,
-                        `--disable-extensions-except=${extPathsJoined}`,
+                        '--enable-unsafe-extension-debugging',  // Habilita Extensions.loadUnpacked via CDP
                         '--enable-features=ExtensionsToolbarMenu',
                     ]
                 });
-                console.log(`✅ [NATIVO] Chrome com extensões lançado com sucesso!`);
 
-                // 🔓 HABILITA DEVELOPER MODE via UI (Obrigatório para extensões CMD aparecerem)
+                console.log(`✅ [NATIVO] Chrome lançado com suporte a extensões!`);
+
+                // 🧩 CARREGA EXTENSÕES VIA CDP Extensions.loadUnpacked
+                // Chrome 137+ removeu --load-extension do chrome.exe oficial
                 try {
-                    console.log(`🔓 [NATIVO] Ativando Developer Mode via UI...`);
-                    const extPage = await browser.newPage();
-                    await extPage.goto('chrome://extensions', { waitUntil: 'load', timeout: 20000 });
-
-                    const result = await extPage.evaluate(async () => {
-                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-                        for (let i = 0; i < 15; i++) {
-                            try {
-                                const manager = document.querySelector('extensions-manager');
-                                const toolbar = manager?.shadowRoot?.querySelector('extensions-toolbar');
-                                const toggle = toolbar?.shadowRoot?.querySelector('#devMode');
-
-                                if (toggle) {
-                                    if (!toggle.checked) {
-                                        toggle.click();
-                                        await sleep(1000);
-                                        return 'clicked';
-                                    }
-                                    return 'already_on';
-                                }
-                            } catch (e) { }
-                            await sleep(1000);
+                    const cdpClient = await browser.target().createCDPSession();
+                    for (const extPath of extensionsList) {
+                        try {
+                            const result = await cdpClient.send('Extensions.loadUnpacked', { path: extPath });
+                            console.log(`✅ [CDP-EXT] Extensão carregada: ${extPath} -> ID: ${result.id}`);
+                        } catch (extErr) {
+                            console.error(`❌ [CDP-EXT] Falha ao carregar ${extPath}:`, extErr.message);
                         }
-                        return 'timeout_no_elements';
-                    });
-
-                    console.log(`🔓 [NATIVO] Developer Mode Status: ${result}`);
-                    if (result === 'clicked') {
-                        await new Promise(r => setTimeout(r, 2000)); // Espera aplicar
                     }
-                    await extPage.close();
-                } catch (extErr) {
-                    console.warn(`⚠️ [NATIVO] Falha na automação de extensões:`, extErr.message);
+                    await cdpClient.detach();
+                } catch (cdpErr) {
+                    console.error(`❌ [CDP-EXT] Erro CDP Extensions:`, cdpErr.message);
                 }
             } else {
                 // Lançamento padrão via Puppeteer para perfis sem extensões
@@ -1618,6 +2169,7 @@ function registerIPCHandlers() {
             await injectProtection(page);
 
             // PROTEÇÃO GLOBAL: Novas abas recebem proteção + auto-fill
+            // Mantemos no mesmo Chrome para preservar autenticação e extensão Rocketoolz
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
                     try {
@@ -1678,7 +2230,7 @@ function registerIPCHandlers() {
 
                 // 🔥 DETECTA se a URL é uma página de login e redireciona para a home
                 const currentUrl = targetUrls[0].toLowerCase();
-                const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso'];
+                const loginPaths = ['/login', '/signin', '/sign-in', '/sign_in', '/auth', '/authenticate', '/sso', '/newlogin'];
                 const isLoginPage = loginPaths.some(lp => currentUrl.includes(lp));
 
                 if (isLoginPage) {
@@ -1818,6 +2370,9 @@ function registerIPCHandlers() {
             // Armazena instâncias para controle
             activePuppeteerInstances.set(profile.id, { browser, page });
 
+            // 📥 ANCORA CDP PARA DOWNLOADS (Modo Nativo)
+            await attachCDPDownloadListener(browser);
+
             // 🔥 CRIA JANELA OVERLAY COM BOTÕES FLUTUANTES
             createFloatingButtons(profile.id);
 
@@ -1864,10 +2419,12 @@ function registerIPCHandlers() {
                 prefs.extensions.ui.developer_mode = true;
                 console.log(`🧩 [PREFS] Developer Mode habilitado no perfil para extensões`);
 
-                // 🔐 DELETA Secure Preferences para impedir hash validation
-                const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
-                if (fs.existsSync(securePrefsPath)) {
-                    try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para aceitar developer_mode`); } catch (e) { }
+                // 🔐 DELETA Secure Preferences SOMENTE se NÃO for Modo Normal
+                if (!profile.useExternalBrowserUI) {
+                    const securePrefsPath = path.join(defaultDir, 'Secure Preferences');
+                    if (fs.existsSync(securePrefsPath)) {
+                        try { fs.unlinkSync(securePrefsPath); console.log(`🗑️ [PREFS] Secure Preferences removido para aceitar developer_mode`); } catch (e) { }
+                    }
                 }
             }
 
@@ -1932,18 +2489,13 @@ function registerIPCHandlers() {
                 proxyUrl ? `--proxy-server=${proxyUrl}` : ''
             ].filter(Boolean);
 
-            // 🧩 CARREGA EXTENSÕES SOMENTE SE O PERFIL TIVER enableExtensions ATIVADO
+            // 🧩 CARREGA EXTENSÕES VIA --load-extension (se ativado)
             const shouldLoadExtensions = profile.enableExtensions === true;
             let extensionsList = [];
             if (shouldLoadExtensions) {
                 extensionsList = getExtensionsList();
                 if (extensionsList.length > 0) {
-                    // Caminhos já estão no formato curto (sem espaços) graças ao getExtensionsList()
-                    const extensionsArg = `--load-extension=${extensionsList.join(',')}`;
-
-                    launchArgs.push(extensionsArg);
-                    console.log(`🔌 [PUPPETEER] Preparando ${extensionsList.length} extensão(ões) para carregar`);
-                    console.log(`🧩 [DEBUG-RAW] extensionsArg: |${extensionsArg}|`);
+                    console.log(`🔌 [PUPPETEER] ${extensionsList.length} extensão(ões) encontrada(s)`);
                 }
             }
 
@@ -1953,16 +2505,17 @@ function registerIPCHandlers() {
                     launchArgs.push(...targetUrls);
                 }
                 console.log(`🧩 [PUPPETEER] Modo toolbar ativado (extensões visíveis)`);
-            } else if (targetUrls.length === 1) {
+            } else if (targetUrls.length === 1 && !profile.useExternalBrowserUI) {
                 launchArgs.push(`--app=${targetUrls[0]}`);
+            } else if (targetUrls.length >= 1) {
+                launchArgs.push(...targetUrls);
             }
 
             let browser;
             if (shouldLoadExtensions && extensionsList.length > 0) {
-                // 🚀 ABORDAGEM PUPPETEER.LAUNCH COM EXTENSÕES (Melhorada)
+                // 🚀 PUPPETEER.LAUNCH COM EXTENSÕES via --load-extension
                 const extPathsJoined = extensionsList.join(',');
-                console.log(`🚀 [PUPPETEER] Lançando via puppeteer.launch() COM suporte a extensões...`);
-                console.log(`🔌 [PUPPETEER] Extensões: ${extPathsJoined}`);
+                console.log(`🚀 [PUPPETEER] Lançando com --load-extension: ${extPathsJoined}`);
 
                 browser = await puppeteer.launch({
                     executablePath,
@@ -1970,49 +2523,14 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    // 🔑 CRUCIAL: Remove bloqueios e flags que causam barra amarela
                     ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
                     args: [
                         ...launchArgs,
-                        `--disable-extensions-except=${extPathsJoined}`,
+                        `--load-extension=${extPathsJoined}`,
                         '--enable-features=ExtensionsToolbarMenu'
                     ]
                 });
                 console.log(`✅ [PUPPETEER] Chrome com extensões lançado com sucesso!`);
-
-                // 🔓 HABILITA DEVELOPER MODE via UI (Opcional mas recomendado para unpacked)
-                try {
-                    console.log(`🔓 [PUPPETEER] Ativando Developer Mode via UI...`);
-                    const extPage = await browser.newPage();
-                    await extPage.goto('chrome://extensions', { waitUntil: 'load', timeout: 20000 });
-
-                    const result = await extPage.evaluate(async () => {
-                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-                        for (let i = 0; i < 15; i++) {
-                            try {
-                                const manager = document.querySelector('extensions-manager');
-                                const toolbar = manager?.shadowRoot?.querySelector('extensions-toolbar');
-                                const toggle = toolbar?.shadowRoot?.querySelector('#devMode');
-                                if (toggle) {
-                                    if (!toggle.checked) {
-                                        toggle.click();
-                                        await sleep(1000);
-                                        return 'clicked';
-                                    }
-                                    return 'already_on';
-                                }
-                            } catch (e) { }
-                            await sleep(1000);
-                        }
-                        return 'timeout_no_elements';
-                    });
-
-                    console.log(`🔓 [PUPPETEER] Status: ${result}`);
-                    if (result === 'clicked') await new Promise(r => setTimeout(r, 2000));
-                    await extPage.close();
-                } catch (extErr) {
-                    console.warn(`⚠️ [PUPPETEER] Falha na ativação via UI:`, extErr.message);
-                }
 
             } else {
                 // Lançamento padrão via Puppeteer para perfis sem extensões
@@ -2047,7 +2565,8 @@ function registerIPCHandlers() {
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
             await injectProtection(page);
 
-            // PROTEÇÃO GLOBAL: Novas abas
+            // PROTEÇÃO GLOBAL: Novas abas abertas pelo Rocketoolz (Access Hub)
+            // Mantemos no mesmo processo Chrome para preservar autenticação e extensão carregada
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
                     const newPage = await target.page();
@@ -2112,7 +2631,7 @@ function registerIPCHandlers() {
 
                 // proxy-chain já cuida da autenticação, não precisa de page.authenticate()
 
-                // Aplica o "Rateio Flix Shield" em cada aba individualmente
+                // Aplica o "Sidnei - Ferramentas Ilimitadas Shield" em cada aba individualmente
                 await page.evaluateOnNewDocument((email, pass, customCSS) => {
                     // ========== EVASÃO ANTI-DETECÇÃO ==========
                     // Remove webdriver property
@@ -2135,16 +2654,21 @@ function registerIPCHandlers() {
                     });
 
                     // Fake chrome runtime
-                    window.chrome = {
-                        runtime: {
-                            id: undefined,
-                            connect: () => { },
-                            sendMessage: () => { },
-                        },
-                        loadTimes: () => ({}),
-                        csi: () => ({}),
-                        app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
-                    };
+                    // 🔓 IMPORTANTE: Só injeta runtime falso se NÃO existir um runtime de extensão real.
+                    // Se uma extensão (ex: Rocketoolz) já injetou window.chrome, não sobrescreve — 
+                    // senão destrói o chrome.runtime.sendMessage() que os botões "Access Now" usam.
+                    if (!window.chrome || !window.chrome.runtime || !window.chrome.runtime.id) {
+                        window.chrome = {
+                            runtime: {
+                                id: undefined,
+                                connect: () => { },
+                                sendMessage: () => { },
+                            },
+                            loadTimes: () => ({}),
+                            csi: () => ({}),
+                            app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+                        };
+                    }
 
                     // Override permissions query
                     const originalQuery = window.navigator.permissions.query;
@@ -2410,6 +2934,30 @@ function registerIPCHandlers() {
                     });
                 }
             }
+
+            // 🔁 ANTI-LOOP ROCKETOOLZ: Detector de redirect /newlogin/ no navegador interno
+            // Quando o Rocketoolz redireciona para /newlogin/?redirect_to=... após login,
+            // navegamos direto para a home do site, quebrando o loop.
+            browser.on('targetchanged', async (target) => {
+                try {
+                    if (target.type() !== 'page') return;
+                    const p = await target.page();
+                    if (!p) return;
+                    const currentUrl = p.url();
+                    if (currentUrl.includes('rocketoolz.com') && currentUrl.includes('/newlogin/')) {
+                        console.log(`🔁 [ANTI-LOOP] Rocketoolz /newlogin/ detectado! Redirecionando para home...`);
+                        const urlObj = new URL(currentUrl);
+                        await p.goto(`${urlObj.protocol}//${urlObj.hostname}/dashboard`,
+                            { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
+                                p.goto(`${urlObj.protocol}//${urlObj.hostname}`,
+                                    { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => { });
+                            });
+                    }
+                } catch (e) { }
+            });
+
+            // 📥 ANCORA CDP PARA DOWNLOADS (Modo Antigo)
+            await attachCDPDownloadListener(browser);
 
             return { status: 'success' };
         } catch (e) {
@@ -2947,6 +3495,46 @@ function createMainWindow() {
     if (app.isPackaged) mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
     else mainWindow.loadURL('http://localhost:5173');
 }
+
+// 📥 GLOBAL DOWNLOAD MONITOR — Captura downloads do APP e TODOS OS PERFIS INTERNOS (WebViews)
+app.on('session-created', (ses) => {
+    ses.on('will-download', (event, item) => {
+        const fileName = item.getFilename();
+        const totalBytes = item.getTotalBytes();
+
+        const sendProgress = (progress, state) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('download-progress', {
+                    profileId: 'global',
+                    fileName,
+                    progress,
+                    state,
+                    totalBytes,
+                    savePath: item.getSavePath()
+                });
+            }
+        };
+
+        // Notifica o início imediatamente
+        sendProgress(0, 'downloading');
+
+        item.on('updated', (evt, downloadState) => {
+            if (downloadState === 'interrupted') {
+                sendProgress(0, 'error');
+            } else {
+                const received = item.getReceivedBytes();
+                const total = item.getTotalBytes();
+                const pct = total > 0 ? Math.round((received / total) * 100) : 0;
+                sendProgress(pct, 'downloading');
+            }
+        });
+
+        item.once('done', (evt, doneState) => {
+            sendProgress(100, doneState === 'completed' ? 'success' : 'error');
+            console.log(`📥 [DOWNLOAD INTERNO] ${fileName} — ${doneState}`);
+        });
+    });
+});
 
 registerIPCHandlers();
 app.whenReady().then(() => {

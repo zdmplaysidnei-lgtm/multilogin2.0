@@ -604,7 +604,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         </div>
 
         <div className="text-gray-500 text-[10px] font-bold uppercase flex gap-3 items-center pb-2">
-          <ShieldCheck size={12} className="text-green-500" /> Multilogin Rateio Flix
+          <ShieldCheck size={12} className="text-green-500" /> Multilogin Sidnei - Ferramentas Ilimitadas
         </div>
       </div>
 

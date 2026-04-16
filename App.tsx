@@ -107,7 +107,34 @@ const App: React.FC = () => {
 
    // --- REORDENAÇÃO (DRAG & DROP) ---
    const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
-   const reorderTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 👈 ADICIONAR ESTA LINHA
+   const reorderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+   // --- GLOBAL DOWNLOADS ---
+   const [globalDownloads, setGlobalDownloads] = useState<{ id: string; fileName: string; progress: number; state: 'downloading' | 'success' | 'error' }[]>([]);
+
+   // 📥 Registra listener global de downloads (navegador interno e externo)
+   useEffect(() => {
+      if (!window.nebulaAPI?.onDownloadProgress) return;
+      window.nebulaAPI.onDownloadProgress((data: any) => {
+         if (data.profileId === 'global') {
+            const id = data.fileName;
+            setGlobalDownloads(prev => {
+               const exists = prev.find(d => d.id === id);
+               const updated = {
+                  id,
+                  fileName: data.fileName,
+                  progress: data.progress,
+                  state: data.state as 'downloading' | 'success' | 'error'
+               };
+               if (exists) return prev.map(d => d.id === id ? updated : d);
+               return [...prev, updated];
+            });
+            if (data.state !== 'downloading') {
+               setTimeout(() => setGlobalDownloads(prev => prev.filter(d => d.id !== id)), 6000);
+            }
+         }
+      });
+   }, []);
    const onDragStart = (index: number) => setDraggedItemIndex(index);
    const onDragOver = (e: React.DragEvent, index: number) => e.preventDefault();
    const onDrop = async (index: number) => {
@@ -542,7 +569,7 @@ const App: React.FC = () => {
          // Usa modo NATIVO (com DRM) se useNativeBrowser estiver habilitado
          // Caso contrário, usa Puppeteer (com auto-fill mas sem DRM)
          let res;
-         if (profile.useNativeBrowser && window.nebulaAPI.launchProfileNative) {
+         if ((profile.useNativeBrowser || profile.useExternalBrowserUI) && window.nebulaAPI.launchProfileNative) {
             // 🔥 CLOUD SYNC: Verifica se existe sessão na Cloud e injeta antes de abrir
             try {
                setLaunchingStatus({ isLaunching: true, message: '☁️ Verificando sessão na Cloud...', profileName: profile.name });
@@ -704,6 +731,8 @@ const App: React.FC = () => {
             urls: (fd.get('urls') as string || '').split('\n').filter(Boolean),
             launchMode: fd.get('launchMode') as 'internal' | 'external' || 'internal',
             useNativeBrowser: fd.get('useNativeBrowser') === 'on', // Habilita DRM (HBO Max, Netflix)
+            useExternalBrowserUI: fd.get('useExternalBrowserUI') === 'on',
+            enableExtensions: fd.get('enableExtensions') === 'on', // Habilita Extensão Rocketoolz
             coverImage: String(fd.get('coverImage') || ''),
             loginType: editingProfile?.loginType || 'cookies', email: String(fd.get('email') || ''),
             password: String(fd.get('password') || ''), cookies: String(fd.get('cookies') || ''),
@@ -836,8 +865,8 @@ const App: React.FC = () => {
 
    if (isAppLoading && !profiles.length) return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center flex-col gap-6">
-         <RefreshCw className="w-12 h-12 text-red-600 animate-spin" />
-         <p className="text-red-400 font-black uppercase tracking-widest text-xs">Sincronizando com Supabase Cloud...</p>
+         <RefreshCw className="w-12 h-12 text-purple-600 animate-spin" />
+         <p className="text-purple-400 font-black uppercase tracking-widest text-xs">Sincronizando com Supabase Cloud...</p>
          <Button variant="secondary" onClick={() => window.location.reload()} className="mt-4">Recarregar App</Button>
       </div>
    );
@@ -846,26 +875,29 @@ const App: React.FC = () => {
       return (
          <div className="min-h-screen flex items-center justify-center bg-[#050505] relative overflow-hidden">
             <ParticleBackground effect={settings?.seasonalEffect} />
-            <div className="relative z-10 w-full max-w-md p-10 bg-black/80 border border-red-500/20 rounded-3xl shadow-2xl backdrop-blur-xl animate-fade-in-up">
+            <div className="relative z-10 w-full max-w-md p-10 bg-black/80 border border-purple-500/20 rounded-3xl shadow-2xl backdrop-blur-xl animate-fade-in-up">
                <div className="flex flex-col items-center mb-8">
-                  <h1 className="text-gray-200 text-sm tracking-[0.3em] uppercase font-black">RATEIO FLIX</h1>
-                  <h2 className="text-gray-400 text-sm tracking-[0.3em] uppercase font-black">FERRAMENTAS PREMIUM</h2>
+                  {settings?.logoUrl && (
+                     <img src={settings.logoUrl} alt="Logo" className="h-20 object-contain mb-4" />
+                  )}
+                  <h1 className="text-gray-200 text-sm tracking-[0.3em] uppercase font-black">SIDNEI</h1>
+                  <h2 className="text-gray-400 text-sm tracking-[0.3em] uppercase font-black">FERRAMENTAS ILIMITADAS</h2>
                </div>
                <form onSubmit={handleLogin} className="space-y-6">
                   <Input type="email" placeholder="E-mail" value={loginForm.email} onChange={e => setLoginForm({ ...loginForm, email: e.target.value })} className="bg-white/5 border-white/10" />
                   <div className="relative">
                      <Input type={showLoginPassword ? "text" : "password"} placeholder="Sua Senha" value={loginForm.password} onChange={e => setLoginForm({ ...loginForm, password: e.target.value })} className="bg-white/5 border-white/10 pr-12" />
-                     <button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition-colors">
+                     <button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-purple-400 transition-colors">
                         {showLoginPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                      </button>
                   </div>
                   <div className="flex items-center gap-2 cursor-pointer select-none" onClick={() => setLoginForm({ ...loginForm, remember: !loginForm.remember })}>
-                     {loginForm.remember ? <CheckSquare className="text-red-500 w-5 h-5" /> : <Square className="text-gray-600 w-5 h-5" />}
+                     {loginForm.remember ? <CheckSquare className="text-purple-500 w-5 h-5" /> : <Square className="text-gray-600 w-5 h-5" />}
                      <span className="text-sm text-gray-400">Lembrar meus dados</span>
                   </div>
                   <Button className="w-full py-4 text-lg font-bold" type="submit" disabled={isSaving}>ENTRAR NO PAINEL</Button>
                   <p className="text-[10px] text-gray-500 text-center mt-4 uppercase font-bold tracking-widest">
-                     💖 Desenvolvido por Rateio Flix - Ferramentas Premium
+                     💖 Desenvolvido por Sidnei - Ferramentas Ilimitadas
                   </p>
                </form>
             </div>
@@ -897,7 +929,7 @@ const App: React.FC = () => {
                            </a>
                            <div className="absolute bottom-2 right-4 flex gap-1">
                               {(settings?.adBanners || []).map((_, idx) => (
-                                 <div key={idx} className={`w-1.5 h-1.5 rounded-full transition-all ${idx === currentAdIndex % settings.adBanners.length ? 'bg-red-500 w-4' : 'bg-white/20'}`}></div>
+                                 <div key={idx} className={`w-1.5 h-1.5 rounded-full transition-all ${idx === currentAdIndex % settings.adBanners.length ? 'bg-purple-500 w-4' : 'bg-white/20'}`}></div>
                               ))}
                            </div>
                         </div>
@@ -907,20 +939,20 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-8">
                      <div className="flex flex-col items-end border-r border-white/10 pr-8">
                         <span className="text-3xl font-black text-white">{dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">{dateTime.toLocaleDateString()}</span>
+                        <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">{dateTime.toLocaleDateString()}</span>
                      </div>
                      <div className="flex items-center gap-4 bg-white/5 px-6 py-2.5 rounded-2xl border border-white/10">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-600 to-red-700 flex items-center justify-center font-black">{currentUser?.email?.[0].toUpperCase()}</div>
-                        <div className="flex flex-col"><span className="font-bold text-xs truncate max-w-[120px]">{currentUser?.email}</span><span className="text-red-400 text-[10px] font-black uppercase">{currentUser?.role}</span></div>
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-purple-700 flex items-center justify-center font-black">{currentUser?.email?.[0].toUpperCase()}</div>
+                        <div className="flex flex-col"><span className="font-bold text-xs truncate max-w-[120px]">{currentUser?.email}</span><span className="text-purple-400 text-[10px] font-black uppercase">{currentUser?.role}</span></div>
                      </div>
                      <button onClick={handleLogout} className="p-4 bg-orange-900/20 text-orange-400 rounded-xl border border-orange-500/20 hover:bg-orange-600 hover:text-white transition-all"><LogOut size={20} /></button>
                   </div>
                </div>
 
                <div className="flex justify-center gap-16 mt-auto">
-                  <button onClick={() => setActiveTab('profiles')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'profiles' ? 'border-red-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Monitor size={18} /> Ferramentas</button>
-                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('users')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'users' ? 'border-red-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Users size={18} /> Membros</button>)}
-                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('settings')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'settings' ? 'border-red-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Settings size={18} /> Sistema</button>)}
+                  <button onClick={() => setActiveTab('profiles')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'profiles' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Monitor size={18} /> Ferramentas</button>
+                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('users')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'users' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Users size={18} /> Membros</button>)}
+                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('settings')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'settings' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Settings size={18} /> Sistema</button>)}
                </div>
             </div>
          </header>
@@ -934,7 +966,7 @@ const App: React.FC = () => {
                      { label: 'Usuários Online', val: stats.onlineMembers, color: 'text-red-500', icon: Zap, online: true },
                      { label: isAdmin ? 'Revendedores Ativos' : 'HWID Painel', val: isAdmin ? stats.totalResellers : machineId.substring(0, 10), color: 'text-blue-500', icon: Shield }
                   ].map((s, idx) => (
-                     <div key={idx} className="bg-black/40 border border-white/5 rounded-3xl p-6 flex items-center gap-6 backdrop-blur-xl group hover:border-red-500/20 transition-all">
+                     <div key={idx} className="bg-black/40 border border-white/5 rounded-3xl p-6 flex items-center gap-6 backdrop-blur-xl group hover:border-purple-500/20 transition-all">
                         <div className={`w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center ${s.color}`}> <s.icon size={24} /> </div>
                         <div className="flex flex-col relative">
                            <span className="text-[10px] font-black uppercase text-gray-500">{s.label}</span>
@@ -957,7 +989,7 @@ const App: React.FC = () => {
                <div className="max-w-[1920px] mx-auto space-y-12 animate-fade-in">
                   <div className="flex justify-between items-center bg-black/80 backdrop-blur-xl p-6 rounded-3xl border border-white/5 gap-6 shadow-2xl relative z-[150]">
                      <div className="flex items-center gap-6">
-                        <div className="relative w-96"> <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={18} /> <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Pesquisar..." className="w-full bg-[#111] border border-gray-800 rounded-2xl py-3 pl-12 text-sm outline-none focus:border-red-500" /> </div>
+                        <div className="relative w-96"> <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={18} /> <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Pesquisar..." className="w-full bg-[#111] border border-gray-800 rounded-2xl py-3 pl-12 text-sm outline-none focus:border-purple-500" /> </div>
                         <div className="relative z-[50]">
                            <button onClick={() => setShowFilterDropdown(!showFilterDropdown)} className="flex items-center gap-3 px-6 py-2.5 bg-blue-600/10 border border-blue-500/30 rounded-2xl text-blue-400 hover:bg-blue-600 hover:text-white transition-all shadow-lg">
                               <Filter size={18} /> <span className="text-[10px] font-black uppercase">{selectedCategory === 'all' ? 'Categorias' : selectedCategory}</span>
@@ -965,14 +997,14 @@ const App: React.FC = () => {
                            </button>
                            {showFilterDropdown && (
                               <div className="absolute top-full mt-3 left-0 w-64 bg-[#141414] border border-gray-800 rounded-2xl py-4 z-[1000] shadow-2xl animate-fade-in">
-                                 <button onClick={() => { setSelectedCategory('all'); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === 'all' ? 'text-red-400' : 'text-gray-400 hover:text-white'}`}>Tudo</button>
+                                 <button onClick={() => { setSelectedCategory('all'); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === 'all' ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`}>Tudo</button>
                                  {(settings?.categories || []).map(cat => (
-                                    <button key={cat} onClick={() => { setSelectedCategory(cat); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === cat ? 'text-red-400' : 'text-gray-400 hover:text-white'}`}>{cat}</button>
+                                    <button key={cat} onClick={() => { setSelectedCategory(cat); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === cat ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`}>{cat}</button>
                                  ))}
                               </div>
                            )}
                         </div>
-                        <button onClick={() => setFilterType(filterType === 'favorites' ? 'all' : 'favorites')} className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl border transition-all ${filterType === 'favorites' ? 'bg-red-600 border-red-400 text-white' : 'bg-red-600/10 border-red-500/30 text-red-400'}`}> <Star size={18} className={filterType === 'favorites' ? 'fill-white' : ''} /> <span className="text-[10px] font-black uppercase">Favoritos</span> </button>
+                        <button onClick={() => setFilterType(filterType === 'favorites' ? 'all' : 'favorites')} className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl border transition-all ${filterType === 'favorites' ? 'bg-purple-600 border-purple-400 text-white' : 'bg-purple-600/10 border-purple-500/30 text-purple-400'}`}> <Star size={18} className={filterType === 'favorites' ? 'fill-white' : ''} /> <span className="text-[10px] font-black uppercase">Favoritos</span> </button>
                         <a href={settings?.tutorialLink || '#'} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-6 py-2.5 bg-orange-600/10 border border-orange-500/30 rounded-2xl text-orange-400 hover:bg-orange-600 hover:text-white transition-all"> <PlayCircle size={18} /> <span className="text-[10px] font-black uppercase">Tutorial</span> </a>
                         <a href={currentSupportLink} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-6 py-2.5 bg-green-600/10 border border-green-500/30 rounded-2xl text-green-400 hover:bg-green-600 hover:text-white transition-all"> <HelpCircle size={18} /> <span className="text-[10px] font-black uppercase">Suporte</span> </a>
                      </div>
@@ -982,7 +1014,7 @@ const App: React.FC = () => {
                         {isAdmin && (
                            <div className="flex gap-2 mr-4 border-r border-white/10 pr-4">
                               <button onClick={handleManualSync} title="Puxar dados da Cloud" className="flex items-center gap-2 px-4 py-2 bg-blue-600/10 border border-blue-500/30 rounded-xl text-blue-400 hover:bg-blue-600 hover:text-white transition-all text-[9px] font-black uppercase"><DownloadCloud size={14} /> Puxar Cloud</button>
-                              <button onClick={handlePushCacheToCloud} title="Subir dados locais para a Cloud" className="flex items-center gap-2 px-4 py-2 bg-red-600/10 border border-red-500/30 rounded-xl text-red-400 hover:bg-red-600 hover:text-white transition-all text-[9px] font-black uppercase"><UploadCloud size={14} /> Subir Cloud</button>
+                              <button onClick={handlePushCacheToCloud} title="Subir dados locais para a Cloud" className="flex items-center gap-2 px-4 py-2 bg-purple-600/10 border border-purple-500/30 rounded-xl text-purple-400 hover:bg-purple-600 hover:text-white transition-all text-[9px] font-black uppercase"><UploadCloud size={14} /> Subir Cloud</button>
                            </div>
                         )}
                         {isAdmin && (<Button onClick={() => { setEditingProfile(null); setModalSelectedCategories([]); setShowProfileModal(true); }} className="!py-3.5 !px-8"> <Plus size={18} /> Novo Perfil </Button>)}
@@ -1027,7 +1059,7 @@ const App: React.FC = () => {
                         </div>
                         <button
                            onClick={() => setVisibleProfilesCount(prev => Math.min(prev + 20, filteredProfiles.length))}
-                           className="flex items-center gap-3 px-8 py-4 bg-red-600/10 border border-red-500/30 rounded-2xl text-red-400 hover:bg-red-600 hover:text-white transition-all shadow-lg hover:shadow-red-500/20"
+                           className="flex items-center gap-3 px-8 py-4 bg-purple-600/10 border border-purple-500/30 rounded-2xl text-purple-400 hover:bg-purple-600 hover:text-white transition-all shadow-lg hover:shadow-purple-500/20"
                         >
                            <Plus size={18} />
                            <span className="font-black uppercase tracking-wider text-sm">Carregar Mais 20</span>
@@ -1042,15 +1074,15 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-end gap-6">
                      <div className="flex flex-col gap-6">
                         <div className="flex gap-8">
-                           <button onClick={() => setUserSubTab('members')} className={`text-3xl font-black uppercase transition-all ${userSubTab === 'members' ? 'text-white border-b-4 border-red-500 pb-2' : 'text-gray-700 hover:text-gray-500'}`}>Membros</button>
-                           {isAdmin && <button onClick={() => setUserSubTab('resellers')} className={`text-3xl font-black uppercase transition-all ${userSubTab === 'resellers' ? 'text-white border-b-4 border-red-500 pb-2' : 'text-gray-700 hover:text-gray-500'}`}>Revendedores</button>}
+                           <button onClick={() => setUserSubTab('members')} className={`text-3xl font-black uppercase transition-all ${userSubTab === 'members' ? 'text-white border-b-4 border-purple-500 pb-2' : 'text-gray-700 hover:text-gray-500'}`}>Membros</button>
+                           {isAdmin && <button onClick={() => setUserSubTab('resellers')} className={`text-3xl font-black uppercase transition-all ${userSubTab === 'resellers' ? 'text-white border-b-4 border-purple-500 pb-2' : 'text-gray-700 hover:text-gray-500'}`}>Revendedores</button>}
                         </div>
                         <div className="flex gap-4">
                            {isAdmin && userSubTab === 'members' && (
                               <select
                                  value={selectedResellerId}
                                  onChange={e => setSelectedResellerId(e.target.value)}
-                                 className="bg-[#111] border border-gray-800 rounded-2xl px-4 py-3 text-[10px] font-black uppercase outline-none focus:border-red-500 text-gray-400"
+                                 className="bg-[#111] border border-gray-800 rounded-2xl px-4 py-3 text-[10px] font-black uppercase outline-none focus:border-purple-500 text-gray-400"
                               >
                                  <option value="all">TODOS OS REVENDEDORES</option>
                                  <option value="ADMIN">ADMIN (DIRETOS)</option>
@@ -1059,17 +1091,14 @@ const App: React.FC = () => {
                                  ))}
                               </select>
                            )}
-                           <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16} /><input value={memberSearchTerm} onChange={e => setMemberSearchTerm(e.target.value)} placeholder="Pesquisar..." className="w-96 bg-[#111] border border-gray-800 rounded-2xl py-3 pl-12 text-sm outline-none focus:border-red-500" /></div>
+                           <div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16} /><input value={memberSearchTerm} onChange={e => setMemberSearchTerm(e.target.value)} placeholder="Pesquisar..." className="w-96 bg-[#111] border border-gray-800 rounded-2xl py-3 pl-12 text-sm outline-none focus:border-purple-500" /></div>
                         </div>
                      </div>
                      <div className="flex gap-3">
                         {(isAdmin || currentUser?.role === Role.RESELLER) && (
                            <div className="flex gap-2">
-                              <Button onClick={() => setShowBulkDateModal(true)} variant="secondary" className="!bg-red-600/10 !border-red-500/20 !text-red-400 hover:!bg-red-600 hover:!text-white">
+                              <Button onClick={() => setShowBulkDateModal(true)} variant="secondary" className="!bg-purple-600/10 !border-purple-500/20 !text-purple-400 hover:!bg-purple-600 hover:!text-white">
                                  <Calendar size={18} /> Alterar Vencimento Geral
-                              </Button>
-                              <Button onClick={handleDeleteAllMembers} variant="danger" className="!bg-red-600/10 !border-red-500/20 !text-red-400 hover:!bg-red-600 hover:!text-white">
-                                 <Trash2 size={18} /> Limpar Todos Membros
                               </Button>
                               <Button onClick={() => setShowImportModal(true)} variant="secondary" className="!bg-orange-600/10 !border-orange-500/20 !text-orange-500 hover:!bg-orange-600 hover:!text-white">
                                  <FileUp size={18} /> Importar Massa
@@ -1103,7 +1132,7 @@ const App: React.FC = () => {
                                  <td className="px-10 py-6 text-right">
                                     <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all">
                                        <button title="Expulsar do Sistema" onClick={() => { if (window.confirm(`Derrubar conexão de ${u.email}?`)) { const n = users.map(x => x.id === u.id ? { ...x, isLoggedIn: false, currentMachineId: undefined } : x); setUsers(n); DataService.updateSingleUser(n.find(x => x.id === u.id)!); setToast({ msg: 'Sessão derrubada!', type: 'success' }); } }} className="p-3 bg-white/5 hover:bg-yellow-600 rounded-xl text-yellow-500 hover:text-white transition-all"><UserX size={16} /></button>
-                                       <button onClick={() => { setEditingUser(u); setIsLifetime(!u.expirationDate); setShowEditUserModal(true); }} className="p-3 bg-white/5 hover:bg-red-600 rounded-xl text-gray-400 hover:text-white transition-all"><Edit2 size={16} /></button>
+                                       <button onClick={() => { setEditingUser(u); setIsLifetime(!u.expirationDate); setShowEditUserModal(true); }} className="p-3 bg-white/5 hover:bg-purple-600 rounded-xl text-gray-400 hover:text-white transition-all"><Edit2 size={16} /></button>
                                        <button onClick={() => { const n = users.map(x => x.id === u.id ? { ...x, blocked: !x.blocked } : x); setUsers(n); DataService.updateSingleUser(n.find(x => x.id === u.id)!); }} className="p-3 bg-white/5 hover:bg-orange-600 rounded-xl text-orange-500 hover:text-white transition-all"><Ban size={16} /></button>
                                        <button onClick={async () => { if (window.confirm('Excluir acesso permanentemente da Nuvem?')) { setIsSaving(true); try { const success = await DataService.deleteUser(u.id); if (success) { setUsers(prev => prev.filter(x => x.id !== u.id)); setToast({ msg: 'Membro removido da Cloud!', type: 'success' }); } else { setToast({ msg: 'Erro ao remover na cloud', type: 'error' }); } } finally { setIsSaving(false); } } }} className="p-3 bg-red-900/20 hover:bg-red-600 rounded-xl text-red-400 hover:text-white transition-all"><Trash2 size={16} /></button>
                                     </div>
@@ -1165,15 +1194,15 @@ const App: React.FC = () => {
                         </div>
 
                         <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl">
-                           <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-red-500"><Ban size={20} /> Blacklist de URLs</h3>
+                           <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-purple-500"><Ban size={20} /> Blacklist de URLs</h3>
                            <div className="space-y-6">
                               <div className="flex gap-4">
                                  <Input placeholder="URL para bloquear (ex: facebook.com)..." value={newBlockedUrl} onChange={e => setNewBlockedUrl(e.target.value)} />
-                                 <button onClick={() => { if (!newBlockedUrl) return; setLocalSettings({ ...localSettings, blockedUrls: [...(localSettings.blockedUrls || []), newBlockedUrl] }); setNewBlockedUrl(''); }} className="p-4 bg-red-600 rounded-xl hover:bg-red-500 transition-all"><Plus size={20} /></button>
+                                 <button onClick={() => { if (!newBlockedUrl) return; setLocalSettings({ ...localSettings, blockedUrls: [...(localSettings.blockedUrls || []), newBlockedUrl] }); setNewBlockedUrl(''); }} className="p-4 bg-purple-600 rounded-xl hover:bg-purple-500 transition-all"><Plus size={20} /></button>
                               </div>
                               <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto custom-scrollbar">
                                  {(localSettings.blockedUrls || []).map(url => (
-                                    <div key={url} className="px-4 py-1.5 bg-red-900/10 border border-blue-500/20 rounded-xl flex items-center gap-3 text-[10px] text-red-400 font-black">
+                                    <div key={url} className="px-4 py-1.5 bg-purple-900/10 border border-blue-500/20 rounded-xl flex items-center gap-3 text-[10px] text-purple-400 font-black">
                                        <span>{url}</span>
                                        <button onClick={() => setLocalSettings({ ...localSettings, blockedUrls: (localSettings.blockedUrls || []).filter(u => u !== url) })}><X size={12} /></button>
                                     </div>
@@ -1182,9 +1211,9 @@ const App: React.FC = () => {
                            </div>
                         </div>
 
-                        <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl border-l-red-500 border-l-8">
+                        <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl border-l-purple-500 border-l-8">
                            <div className="flex justify-between items-center border-b border-gray-800 pb-6">
-                              <h3 className="text-xl font-black uppercase flex items-center gap-4 text-red-400"><Bell size={20} /> Gerenciador de Avisos (Pop-up)</h3>
+                              <h3 className="text-xl font-black uppercase flex items-center gap-4 text-purple-400"><Bell size={20} /> Gerenciador de Avisos (Pop-up)</h3>
                               <Switch label="Ativar Aviso Global" checked={localSettings.popup?.enabled || false} onChange={v => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), enabled: v } })} />
                            </div>
                            <div className="space-y-2 pb-4">
@@ -1198,7 +1227,7 @@ const App: React.FC = () => {
                                     { id: 'admin_members', label: '🔷 Membros do Admin' },
                                     { id: 'reseller_members', label: '🔶 Membros dos Revend.' }
                                  ].map(a => (
-                                    <button key={a.id} onClick={() => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), targetAudience: a.id as any } })} className={`py-2 px-1 rounded-lg text-[8px] font-black uppercase transition-all ${(localSettings.popup?.targetAudience || 'all') === a.id ? 'bg-red-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>{a.label}</button>
+                                    <button key={a.id} onClick={() => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), targetAudience: a.id as any } })} className={`py-2 px-1 rounded-lg text-[8px] font-black uppercase transition-all ${(localSettings.popup?.targetAudience || 'all') === a.id ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>{a.label}</button>
                                  ))}
                               </div>
                            </div>
@@ -1212,14 +1241,14 @@ const App: React.FC = () => {
                                           { id: 'image', icon: ImageIcon, label: 'Imagem' },
                                           { id: 'video', icon: Video, label: 'Vídeo' }
                                        ].map(t => (
-                                          <button key={t.id} onClick={() => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), type: t.id as any } })} className={`flex-1 py-3 rounded-lg flex flex-col items-center gap-2 transition-all ${localSettings.popup?.type === t.id ? 'bg-red-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>
+                                          <button key={t.id} onClick={() => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), type: t.id as any } })} className={`flex-1 py-3 rounded-lg flex flex-col items-center gap-2 transition-all ${localSettings.popup?.type === t.id ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}>
                                              <t.icon size={18} /> <span className="text-[8px] font-black uppercase">{t.label}</span>
                                           </button>
                                        ))}
                                     </div>
                                  </div>
                                  <Input label="URL da Mídia" value={localSettings.popup?.contentUrl || ''} onChange={e => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), contentUrl: e.target.value } })} />
-                                 <textarea className="w-full bg-[#0d0d0d] border border-gray-800 rounded-3xl p-6 text-sm h-32 text-white outline-none focus:border-red-500 resize-none shadow-inner" placeholder="Mensagem..." value={localSettings.popup?.textContent || ''} onChange={e => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), textContent: e.target.value } })} />
+                                 <textarea className="w-full bg-[#0d0d0d] border border-gray-800 rounded-3xl p-6 text-sm h-32 text-white outline-none focus:border-purple-500 resize-none shadow-inner" placeholder="Mensagem..." value={localSettings.popup?.textContent || ''} onChange={e => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), textContent: e.target.value } })} />
                               </div>
                               <div className="space-y-6">
                                  <Input label="Texto do Botão" value={localSettings.popup?.actionText || ''} onChange={e => setLocalSettings({ ...localSettings, popup: { ...(localSettings.popup || INITIAL_SETTINGS.popup), actionText: e.target.value } })} />
@@ -1239,7 +1268,7 @@ const App: React.FC = () => {
 
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                            <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl">
-                              <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-red-400"><Palette size={20} /> Identidade Visual</h3>
+                              <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-purple-400"><Palette size={20} /> Identidade Visual</h3>
                               <div className="space-y-6">
                                  <Input label="Logo do Painel (URL)" value={localSettings.logoUrl || ''} onChange={e => setLocalSettings({ ...localSettings, logoUrl: e.target.value })} />
                                  <div className="grid grid-cols-2 gap-6">
@@ -1272,7 +1301,7 @@ const App: React.FC = () => {
                                           { id: 'rain', label: '🌧️ Chuva' },
                                           { id: 'summer', label: '☀️ Verão' },
                                        ].map(ef => (
-                                          <button key={ef.id} onClick={() => setLocalSettings({ ...localSettings, seasonalEffect: ef.id as any })} className={`p-2.5 rounded-xl border text-[8px] font-black uppercase transition-all ${localSettings.seasonalEffect === ef.id ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-black/40 border-gray-800 text-gray-500 hover:border-gray-600 hover:text-gray-300'}`}>{ef.label}</button>
+                                          <button key={ef.id} onClick={() => setLocalSettings({ ...localSettings, seasonalEffect: ef.id as any })} className={`p-2.5 rounded-xl border text-[8px] font-black uppercase transition-all ${localSettings.seasonalEffect === ef.id ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-500/20' : 'bg-black/40 border-gray-800 text-gray-500 hover:border-gray-600 hover:text-gray-300'}`}>{ef.label}</button>
                                        ))}
                                     </div>
                                  </div>
@@ -1298,7 +1327,7 @@ const App: React.FC = () => {
                                        <div key={idx} className="bg-black/40 p-2 rounded-xl flex items-center gap-4 border border-white/5 group">
                                           <img src={b} className="h-10 w-20 object-cover rounded-lg" />
                                           <div className="flex-1 truncate text-[9px] text-gray-500">{b}</div>
-                                          <button onClick={() => { const bNext = [...localSettings.adBanners]; const lNext = [...localSettings.adBannerLinks]; bNext.splice(idx, 1); lNext.splice(idx, 1); setLocalSettings({ ...localSettings, adBanners: bNext, adBannerLinks: lNext }); }} className="p-2 text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14} /></button>
+                                          <button onClick={() => { const bNext = [...localSettings.adBanners]; const lNext = [...localSettings.adBannerLinks]; bNext.splice(idx, 1); lNext.splice(idx, 1); setLocalSettings({ ...localSettings, adBanners: bNext, adBannerLinks: lNext }); }} className="p-2 text-purple-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14} /></button>
                                        </div>
                                     ))}
                                  </div>
@@ -1315,7 +1344,7 @@ const App: React.FC = () => {
                               </div>
                               <div className="flex gap-2">
                                  <button onClick={() => setShowAutomationModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600/10 border border-blue-500/30 rounded-xl text-blue-500 hover:bg-blue-600 hover:text-white transition-all text-[9px] font-black uppercase"><Code size={14} /> Script V15</button>
-                                 <button onClick={() => simulateHotmartEvent('PROTESTO (CHARGEBACK)')} className="flex items-center gap-2 px-4 py-2 bg-red-600/10 border border-red-500/30 rounded-xl text-red-500 hover:bg-red-600 hover:text-white transition-all text-[9px] font-black uppercase"><Zap size={14} /> Simular Expulsão</button>
+                                 <button onClick={() => simulateHotmartEvent('PROTESTO (CHARGEBACK)')} className="flex items-center gap-2 px-4 py-2 bg-purple-600/10 border border-purple-500/30 rounded-xl text-purple-500 hover:bg-purple-600 hover:text-white transition-all text-[9px] font-black uppercase"><Zap size={14} /> Simular Expulsão</button>
                                  <button onClick={fetchRadarLogs} className="p-2 hover:bg-white/5 rounded-full transition-all text-gray-600 hover:text-white border border-white/5"><RefreshCw size={16} /></button>
                               </div>
                            </div>
@@ -1323,8 +1352,8 @@ const App: React.FC = () => {
                               <div className="bg-blue-600/5 border border-blue-500/20 p-6 rounded-2xl space-y-4">
                                  <div className="flex items-center justify-between"><span className="text-[11px] font-black text-blue-400 uppercase flex items-center gap-2"><Globe size={14} /> Webhook URL</span></div>
                                  <div className="flex items-center gap-3 bg-black/40 p-4 rounded-xl border border-white/5">
-                                    <code className="flex-1 text-[11px] text-blue-200 font-mono break-all select-all">https://nkxiwcrffyvnmyvdggai.supabase.co/functions/v1/hyper-responder</code>
-                                    <button onClick={() => { navigator.clipboard.writeText('https://nkxiwcrffyvnmyvdggai.supabase.co/functions/v1/hyper-responder'); setToast({ msg: 'Copiado!', type: 'info' }) }} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 transition-all"><Copy size={16} /></button>
+                                    <code className="flex-1 text-[11px] text-blue-200 font-mono break-all select-all">https://fkrijejmvtwwtgirlsey.supabase.co/functions/v1/smart-action</code>
+                                    <button onClick={() => { navigator.clipboard.writeText('https://fkrijejmvtwwtgirlsey.supabase.co/functions/v1/smart-action'); setToast({ msg: 'Copiado!', type: 'info' }) }} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 transition-all"><Copy size={16} /></button>
                                  </div>
                               </div>
                               <div className="max-h-[300px] overflow-y-auto font-mono text-[11px] bg-black/40 rounded-3xl p-6 border border-white/5 custom-scrollbar">
@@ -1359,7 +1388,7 @@ const App: React.FC = () => {
 
                   {currentUser?.role === Role.RESELLER && !isAdmin && (
                      <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl">
-                        <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-red-400"> <Shield size={20} /> Personalizar Meu Painel</h3>
+                        <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-purple-400"> <Shield size={20} /> Personalizar Meu Painel</h3>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                            <div className="space-y-6">
                               <Input label="Logo (URL)" value={currentUser.customLogoUrl || ''} onChange={e => setCurrentUser({ ...currentUser, customLogoUrl: e.target.value })} />
@@ -1383,13 +1412,13 @@ const App: React.FC = () => {
                </div>
                <div className="flex items-center gap-4 overflow-x-auto no-scrollbar max-w-[400px]">
                   {runningProfiles.map(p => (
-                     <div key={p.id} onClick={() => setActiveProfileId(p.id)} className={`relative w-14 h-14 rounded-2xl overflow-hidden cursor-pointer transition-all border-2 flex-shrink-0 ${activeProfileId === p.id ? 'border-red-500 shadow-lg' : 'border-transparent opacity-40'}`}>
+                     <div key={p.id} onClick={() => setActiveProfileId(p.id)} className={`relative w-14 h-14 rounded-2xl overflow-hidden cursor-pointer transition-all border-2 flex-shrink-0 ${activeProfileId === p.id ? 'border-purple-500 shadow-lg' : 'border-transparent opacity-40'}`}>
                         <img src={p.coverImage} className="w-full h-full object-cover" />
-                        <button onClick={e => { e.stopPropagation(); setRunningProfiles(prev => prev.filter(x => x.id !== p.id)); if (activeProfileId === p.id) setActiveProfileId(null); }} className="absolute top-1 right-1 bg-red-600 text-white rounded p-0.5"><X size={10} /></button>
+                        <button onClick={e => { e.stopPropagation(); setRunningProfiles(prev => prev.filter(x => x.id !== p.id)); if (activeProfileId === p.id) setActiveProfileId(null); }} className="absolute top-1 right-1 bg-purple-600 text-white rounded p-0.5"><X size={10} /></button>
                      </div>
                   ))}
                </div>
-               <button onClick={() => setRunningProfiles([])} className="p-4 bg-red-900/40 text-red-400 hover:bg-red-600 transition-all rounded-2xl shadow-xl active:scale-95"><Power size={22} /></button>
+               <button onClick={() => setRunningProfiles([])} className="p-4 bg-purple-900/40 text-purple-400 hover:bg-purple-600 transition-all rounded-2xl shadow-xl active:scale-95"><Power size={22} /></button>
             </div>
          )}
 
@@ -1424,23 +1453,37 @@ const App: React.FC = () => {
                      <Input name="coverImage" label="URL da Imagem da Capa" defaultValue={editingProfile?.coverImage} required />
                      <div className="space-y-1">
                         <label className="text-[10px] font-black uppercase text-gray-600">Modo de Inicialização</label>
-                        <select name="launchMode" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm outline-none focus:border-red-500" defaultValue={editingProfile?.launchMode || 'internal'}>
+                        <select name="launchMode" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm outline-none focus:border-purple-500" defaultValue={editingProfile?.launchMode || 'internal'}>
                            <option value="internal">Interno (Browser do App)</option>
                            <option value="external">Externo (Navegador Local / Chrome)</option>
                         </select>
                      </div>
-                     <div className="flex items-center gap-4 bg-red-900/10 border border-red-500/30 rounded-2xl p-4">
-                        <input type="checkbox" name="useNativeBrowser" id="useNativeBrowser" defaultChecked={editingProfile?.useNativeBrowser} className="w-5 h-5 accent-red-500" />
+                     <div className="flex items-center gap-4 bg-orange-900/10 border border-orange-500/30 rounded-2xl p-4">
+                        <input type="checkbox" name="useExternalBrowserUI" id="useExternalBrowserUI" defaultChecked={editingProfile?.useExternalBrowserUI} className="w-5 h-5 accent-orange-500" />
                         <div className="flex flex-col">
-                           <label htmlFor="useNativeBrowser" className="text-sm font-bold text-red-400 cursor-pointer">🎬 Habilitar DRM (Streaming)</label>
+                           <label htmlFor="useExternalBrowserUI" className="text-sm font-bold text-orange-400 cursor-pointer">🌐 Navegação Normal</label>
+                           <span className="text-[9px] text-gray-500">Abre navegador completo (sem Modo App) permitindo instalar extensões</span>
+                        </div>
+                     </div>
+                     <div className="flex items-center gap-4 bg-purple-900/10 border border-purple-500/30 rounded-2xl p-4">
+                        <input type="checkbox" name="useNativeBrowser" id="useNativeBrowser" defaultChecked={editingProfile?.useNativeBrowser} className="w-5 h-5 accent-purple-500" />
+                        <div className="flex flex-col">
+                           <label htmlFor="useNativeBrowser" className="text-sm font-bold text-purple-400 cursor-pointer">🎬 Habilitar DRM (Streaming)</label>
                            <span className="text-[9px] text-gray-500">Para HBO Max, Netflix, Disney+, Amazon Prime, etc. (Modo Externo)</span>
+                        </div>
+                     </div>
+                     <div className="flex items-center gap-4 bg-blue-900/10 border border-blue-500/30 rounded-2xl p-4">
+                        <input type="checkbox" name="enableExtensions" id="enableExtensions" defaultChecked={editingProfile?.enableExtensions} className="w-5 h-5 accent-blue-500" />
+                        <div className="flex flex-col">
+                           <label htmlFor="enableExtensions" className="text-sm font-bold text-blue-400 cursor-pointer">🚀 Extensão Rocketoolz</label>
+                           <span className="text-[9px] text-gray-500">Carrega a extensão "Rocketoolz" juntamente com o login do serviço</span>
                         </div>
                      </div>
                      <div className="space-y-1">
                         <label className="text-[10px] font-black uppercase text-gray-600">Escolher Categorias</label>
                         <div className="grid grid-cols-2 gap-2 bg-black/40 border border-gray-800 rounded-2xl p-4 max-h-48 overflow-y-auto custom-scrollbar">
                            {(settings?.categories || []).map(cat => (
-                              <button key={cat} type="button" onClick={() => toggleModalCategory(cat)} className={`flex items-center justify-between px-3 py-2 rounded-xl border text-[9px] font-black transition-all ${modalSelectedCategories.includes(cat) ? 'bg-red-600/20 border-red-500 text-red-400' : 'bg-black/40 border-gray-800 text-gray-600'}`}>
+                              <button key={cat} type="button" onClick={() => toggleModalCategory(cat)} className={`flex items-center justify-between px-3 py-2 rounded-xl border text-[9px] font-black transition-all ${modalSelectedCategories.includes(cat) ? 'bg-purple-600/20 border-purple-500 text-purple-400' : 'bg-black/40 border-gray-800 text-gray-600'}`}>
                                  <span className="truncate">{cat}</span> {modalSelectedCategories.includes(cat) && <Check size={12} />}
                               </button>
                            ))}
@@ -1449,7 +1492,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="space-y-6">
                      <label className="text-[10px] font-black uppercase text-gray-600">URLs (Iniciais)</label>
-                     <textarea name="urls" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm h-32 outline-none focus:border-red-500 font-mono" defaultValue={editingProfile?.urls?.join('\n') || ''} required />
+                     <textarea name="urls" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm h-32 outline-none focus:border-purple-500 font-mono" defaultValue={editingProfile?.urls?.join('\n') || ''} required />
                      <Input name="orderIndex" label="Índice de Ordem" type="number" defaultValue={editingProfile?.orderIndex} />
                      <Input name="videoTutorial" label="Link de Instruções (Tutorial)" defaultValue={editingProfile?.videoTutorial} />
                      <div className="flex gap-3">
@@ -1459,13 +1502,13 @@ const App: React.FC = () => {
                   </div>
                </div>
                <div className="bg-black/40 p-8 rounded-[35px] border border-gray-800 space-y-8">
-                  <h4 className="text-red-400 font-black uppercase text-xs tracking-widest flex items-center gap-3"> <Puzzle size={18} /> Configurações de Login & Automação</h4>
+                  <h4 className="text-purple-400 font-black uppercase text-xs tracking-widest flex items-center gap-3"> <Puzzle size={18} /> Configurações de Login & Automação</h4>
                   <div className="grid grid-cols-2 gap-8">
                      <div className="space-y-6">
                         <Input name="email" label="Auto-Fill E-mail" defaultValue={editingProfile?.email} />
                         <div className="relative">
                            <Input name="password" label="Auto-Fill Senha" type={showProfilePassword ? 'text' : 'password'} defaultValue={editingProfile?.password} className="pr-12" />
-                           <button type="button" onClick={() => setShowProfilePassword(!showProfilePassword)} className="absolute right-4 bottom-3 text-gray-500 hover:text-red-400 transition-colors">
+                           <button type="button" onClick={() => setShowProfilePassword(!showProfilePassword)} className="absolute right-4 bottom-3 text-gray-500 hover:text-purple-400 transition-colors">
                               {showProfilePassword ? <EyeOff size={18} /> : <Eye size={18} />}
                            </button>
                         </div>
@@ -1473,11 +1516,11 @@ const App: React.FC = () => {
                      </div>
                      <div className="space-y-4">
                         <label className="text-[10px] font-black uppercase text-gray-600">Cookies JSON</label>
-                        <textarea name="cookies" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-gray-500 h-24 outline-none focus:border-red-500" defaultValue={editingProfile?.cookies} />
+                        <textarea name="cookies" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-gray-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.cookies} />
                         <label className="text-[10px] font-black uppercase text-gray-600">Script de Automação (JS)</label>
-                        <textarea name="automationScript" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-green-500 h-24 outline-none focus:border-red-500" defaultValue={editingProfile?.automationScript} />
+                        <textarea name="automationScript" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-green-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.automationScript} />
                         <label className="text-[10px] font-black uppercase text-gray-600">CSS Personalizado (Injeção)</label>
-                        <textarea name="customCSS" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-blue-400 h-24 outline-none focus:border-red-500" defaultValue={editingProfile?.customCSS} />
+                        <textarea name="customCSS" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-blue-400 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.customCSS} />
                      </div>
                   </div>
                </div>
@@ -1532,7 +1575,7 @@ Deno.serve(async (req) => {
       } else {
         await supabase.from('users').insert({
           id: 'h_' + Math.random().toString(36).substring(2, 10),
-          email, password: "membro123", role: "MEMBER", blocked: false, createdAt: Date.now(), expirationDate: newExp
+          email, password: "membro123", role: "MEMBER", blocked: false, createdAt: Date.now(), expirationDate: newExp, ownerId: "ADMIN"
         })
         statusMsg = "ACESSO CRIADO ✅"
       }
@@ -1549,7 +1592,62 @@ Deno.serve(async (req) => {
   }
 })`}
                   </pre>
-                  <button onClick={() => { navigator.clipboard.writeText(`CÓDIGO V15.0 COPIADO`); setToast({ msg: 'Copiado!', type: 'success' }); }} className="absolute top-4 right-4 p-3 bg-red-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all cursor-pointer"><Copy size={16} /></button>
+                  <button onClick={() => {
+                     navigator.clipboard.writeText(`import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+Deno.serve(async (req) => {
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  )
+
+  try {
+    const body = await req.json()
+    const event = (body.event || body.type || "").toUpperCase()
+    
+    const email = (
+      body.data?.buyer?.email || 
+      body.data?.subscriber?.email || 
+      body.email || 
+      body.data?.user?.email || 
+      body.buyer?.email ||
+      body.customer?.email ||
+      ""
+    ).toLowerCase().trim()
+
+    if (!email) return new Response("Email nao detectado", { status: 400 })
+
+    let statusMsg = "PROCESSADO"
+    const activationEvents = ['PURCHASE_APPROVED', 'APPROVED', 'COMPLETED', 'SUBSCRIPTION_PROCESSED', 'TRIAL_PROCESSED', 'ORDER_PAID']
+    const blockingEvents = ['PURCHASE_CANCELED', 'PURCHASE_REFUNDED', 'REFUNDED', 'SUBSCRIPTION_CANCELLED', 'SUBSCRIPTION_CANCELLATION', 'CHARGEBACK', 'PURCHASE_EXPIRED', 'PURCHASE_PROTEST', 'PROTEST', 'DISPUTE_OPENED', 'CANCELLED']
+
+    if (activationEvents.includes(event)) {
+      const { data: user } = await supabase.from('users').select('*').eq('email', email).single()
+      const newExp = Date.now() + (30 * 24 * 60 * 60 * 1000);
+
+      if (user) {
+        await supabase.from('users').update({ blocked: false, expirationDate: newExp }).eq('email', email)
+        statusMsg = "REATIVADO ✅"
+      } else {
+        await supabase.from('users').insert({
+          id: 'h_' + Math.random().toString(36).substring(2, 10),
+          email, password: "membro123", role: "MEMBER", blocked: false, createdAt: Date.now(), expirationDate: newExp, ownerId: "ADMIN"
+        })
+        statusMsg = "ACESSO CRIADO ✅"
+      }
+    } 
+    else if (blockingEvents.includes(event)) {
+      await supabase.from('users').update({ blocked: true, isLoggedIn: false, currentMachineId: null }).eq('email', email)
+      statusMsg = (event.includes('PROTEST') || event.includes('CHARGE')) ? "EXPULSO POR PROTESTO 🚨" : "BLOQUEADO (REEMBOLSO/FIM)";
+    }
+
+    await supabase.from('logs').insert({ email, event: event || 'WEBHOOK', status: statusMsg, time: new Date().toISOString() })
+    return new Response(JSON.stringify({ ok: true, status: statusMsg }), { headers: { "Content-Type": "application/json" } })
+  } catch (err) {
+    return new Response(err.message, { status: 500 })
+  }
+})`); setToast({ msg: 'Copiado!', type: 'success' });
+                  }} className="absolute top-4 right-4 p-3 bg-purple-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all cursor-pointer"><Copy size={16} /></button>
                </div>
             </div>
          </Modal>
@@ -1561,7 +1659,7 @@ Deno.serve(async (req) => {
                <Input name="password" label="Senha Personalizada" placeholder="Em branco para usar a padrão do sistema" />
                <select name="role" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm" defaultValue={Role.MEMBER}> {isAdmin && <option value={Role.RESELLER}>Revendedor</option>} <option value={Role.MEMBER}>Membro Premium</option> </select>
                <div className="flex items-center justify-between p-6 bg-white/5 rounded-3xl">
-                  <span className="text-xs font-black uppercase text-red-400">Acesso Vitalício?</span>
+                  <span className="text-xs font-black uppercase text-purple-400">Acesso Vitalício?</span>
                   <Switch label="" checked={isLifetime} onChange={(val) => { setIsLifetime(val); }} />
                </div>
                {!isLifetime && (
@@ -1587,7 +1685,7 @@ Deno.serve(async (req) => {
                   <Input name="email" label="Email do Cliente" defaultValue={editingUser.email} required />
                   <Input name="password" label="Nova Senha" placeholder="Vazio para manter a atual" />
                   <div className="flex items-center justify-between p-6 bg-white/5 rounded-3xl">
-                     <span className="text-xs font-black uppercase text-red-400">Plano Vitalício</span>
+                     <span className="text-xs font-black uppercase text-purple-400">Plano Vitalício</span>
                      <Switch label="" checked={isLifetime} onChange={setIsLifetime} />
                   </div>
                   {!isLifetime && (
@@ -1614,15 +1712,60 @@ Deno.serve(async (req) => {
                e.preventDefault(); setIsSaving(true);
                try {
                   const emails = importEmails.split(/[\n,;]/).map(e => e.trim().toLowerCase()).filter(e => e.includes('@'));
-                  const newList = [...users]; const thirtyDaysFromNow = Date.now() + (30 * 24 * 60 * 60 * 1000);
+                  const thirtyDaysFromNow = Date.now() + (30 * 24 * 60 * 60 * 1000);
+                  let updatedCount = 0;
+                  let addedCount = 0;
+
+                  const deltaToUpsert: typeof users = [];
+                  const nextUsers = [...users];
+
                   emails.forEach(email => {
-                     if (!newList.find(u => u.email === email)) {
-                        newList.push({
-                           id: `u_imp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`, email, password: settings?.defaultMemberPassword || 'membro123', role: Role.MEMBER, ownerId: currentUser?.id || 'ADMIN', createdAt: Date.now(), expirationDate: thirtyDaysFromNow
-                        });
+                     let existing = nextUsers.find(u => u?.email?.toLowerCase() === email);
+                     if (existing) {
+                        existing.expirationDate = thirtyDaysFromNow;
+                        existing.blocked = false;
+                        updatedCount++;
+                        deltaToUpsert.push(existing);
+                     } else {
+                        const newUser = {
+                           id: `u_imp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`, email, password: settings?.defaultMemberPassword || 'membro123', role: Role.MEMBER, ownerId: currentUser?.id || 'ADMIN', createdAt: Date.now(), expirationDate: thirtyDaysFromNow, blocked: false, isLoggedIn: false
+                        };
+                        nextUsers.push(newUser);
+                        addedCount++;
+                        deltaToUpsert.push(newUser);
                      }
                   });
-                  setUsers(newList); await DataService.saveUsers(newList); setShowImportModal(false); setImportEmails(''); setToast({ msg: 'Importado!', type: 'success' });
+
+                  if (deltaToUpsert.length === 0) {
+                     setToast({ msg: 'Nenhum e-mail válido para processar.', type: 'info' });
+                     setIsSaving(false); return;
+                  }
+
+                  setUsers(nextUsers);
+                  setToast({ msg: `Salvando ${deltaToUpsert.length} alterações na Nuvem...`, type: 'info' });
+
+                  let allSuccess = true;
+                  const chunkSize = 100;
+                  for (let i = 0; i < deltaToUpsert.length; i += chunkSize) {
+                     const chunk = deltaToUpsert.slice(i, i + chunkSize);
+                     const { error } = await supabase.from('users').upsert(chunk, { onConflict: 'id' });
+                     if (error) {
+                        console.error("Erro no chunk do importador:", error);
+                        allSuccess = false;
+                     }
+                  }
+
+                  localStorage.setItem('nebula_users_v1', Security.encrypt(nextUsers));
+                  setShowImportModal(false); setImportEmails('');
+
+                  if (allSuccess) {
+                     setToast({ msg: `✅ Cloud Sync OK! ${addedCount} novos, ${updatedCount} renovados.`, type: 'success' });
+                  } else {
+                     setToast({ msg: `⚠️ Importado com inconsistências na Nuvem. Verifique a tela.`, type: 'error' });
+                  }
+               } catch (err) {
+                  console.error("Crash no Importador:", err);
+                  setToast({ msg: 'Erro Crítico: ' + (err as Error).message, type: 'error' });
                } finally { setIsSaving(false); }
             }} className="space-y-6">
                <textarea className="w-full bg-[#111] border border-gray-800 rounded-3xl p-6 text-sm h-64 outline-none font-mono" value={importEmails} onChange={e => setImportEmails(e.target.value)} placeholder="Cole os e-mails..." required />
@@ -1639,7 +1782,7 @@ Deno.serve(async (req) => {
                <div className="flex flex-col items-center gap-6 p-10 bg-gradient-to-br from-gray-900/90 to-black/90 rounded-3xl border border-red-500/30 shadow-2xl shadow-red-500/20">
                   {/* Spinner animado */}
                   <div className="relative">
-                     <div className="w-16 h-16 border-4 border-red-500/30 rounded-full animate-spin" style={{ borderTopColor: '#E50914' }}></div>
+                     <div className="w-16 h-16 border-4 border-purple-500/30 rounded-full animate-spin" style={{ borderTopColor: '#E50914' }}></div>
                      <div className="absolute inset-0 flex items-center justify-center">
                         <Chrome className="w-6 h-6 text-red-400" />
                      </div>
@@ -1655,11 +1798,59 @@ Deno.serve(async (req) => {
 
                   {/* Barra de progresso animada */}
                   <div className="w-64 h-1 bg-gray-800 rounded-full overflow-hidden">
-                     <div className="h-full bg-gradient-to-r from-red-600 to-pink-500 animate-pulse" style={{ width: '100%', animation: 'loading-bar 2s ease-in-out infinite' }}></div>
+                     <div className="h-full bg-gradient-to-r from-purple-600 to-pink-500 animate-pulse" style={{ width: '100%', animation: 'loading-bar 2s ease-in-out infinite' }}></div>
                   </div>
 
                   <p className="text-xs text-gray-500">Aguarde, isso pode levar alguns segundos...</p>
                </div>
+            </div>
+         )}
+
+         {/* 📥 GLOBAL DOWNLOAD HUD */}
+         {globalDownloads.length > 0 && (
+            <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 pointer-events-none">
+               {globalDownloads.map(dl => (
+                  <div key={dl.id} className="flex items-center gap-3 bg-[#1a1a1a]/95 border border-gray-700 rounded-xl px-4 py-3 shadow-2xl backdrop-blur-md pointer-events-auto min-w-[280px] max-w-xs animate-fade-in-up">
+                     <div className="shrink-0">
+                        {dl.state === 'downloading' && (
+                           <div className="p-1.5 bg-purple-600/20 rounded-lg">
+                              <DownloadCloud className="w-4 h-4 text-purple-400 animate-bounce" />
+                           </div>
+                        )}
+                        {dl.state === 'success' && (
+                           <div className="p-1.5 bg-green-600/20 rounded-lg">
+                              <Check className="w-4 h-4 text-green-400" />
+                           </div>
+                        )}
+                        {dl.state === 'error' && (
+                           <div className="p-1.5 bg-red-600/20 rounded-lg">
+                              <AlertTriangle className="w-4 h-4 text-red-400" />
+                           </div>
+                        )}
+                     </div>
+                     <div className="flex-1 min-w-0">
+                        <p className="text-white text-[10px] font-black truncate tracking-wide uppercase">{dl.fileName}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                           <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                              <div
+                                 className={`h-full rounded-full transition-all duration-300 ${dl.state === 'success' ? 'bg-green-500' : dl.state === 'error' ? 'bg-red-500' : 'bg-gradient-to-r from-purple-500 to-pink-500'
+                                    }`}
+                                 style={{ width: `${dl.progress}%` }}
+                              />
+                           </div>
+                           <span className="text-gray-500 text-[9px] font-bold shrink-0">
+                              {dl.state === 'downloading' ? `${dl.progress}%` : dl.state.toUpperCase()}
+                           </span>
+                        </div>
+                     </div>
+                     <button
+                        onClick={() => setGlobalDownloads(prev => prev.filter(d => d.id !== dl.id))}
+                        className="shrink-0 text-gray-600 hover:text-white transition-colors"
+                     >
+                        <X size={12} />
+                     </button>
+                  </div>
+               ))}
             </div>
          )}
       </div>

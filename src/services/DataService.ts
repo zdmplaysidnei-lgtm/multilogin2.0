@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
-import { AppSettings, Profile, User } from '../types';
-import { INITIAL_SETTINGS, MOCK_USERS, MOCK_PROFILES } from '../constants';
+import { AppSettings, Profile, User } from '../../types';
+import { INITIAL_SETTINGS, MOCK_USERS, MOCK_PROFILES } from '../../constants';
 import { Security } from './Security';
 
 /**
@@ -14,7 +14,7 @@ const cleanForSupabase = (obj: any) => {
 };
 
 export const DataService = {
-  
+
   initializeData: async () => {
     const cachedUsers = Security.decrypt(localStorage.getItem('nebula_users_v1'));
     const cachedProfiles = Security.decrypt(localStorage.getItem('nebula_profiles_v1'));
@@ -33,7 +33,7 @@ export const DataService = {
 
       // Anti-wipe: não apaga local se nuvem estiver vazia por erro
       if (cloudProfiles.length === 0 && cachedProfiles && cachedProfiles.length > 0) {
-          return { users: cloudUsers, profiles: cachedProfiles, settings: cloudSettings, isOffline: false };
+        return { users: cloudUsers, profiles: cachedProfiles, settings: cloudSettings, isOffline: false };
       }
 
       DataService.saveToLocalCache(cloudUsers, cloudProfiles, cloudSettings);
@@ -51,9 +51,17 @@ export const DataService = {
   saveUsers: async (users: User[]): Promise<boolean> => {
     localStorage.setItem('nebula_users_v1', Security.encrypt(users));
     try {
-      const sanitized = cleanForSupabase(users);
-      const { error } = await supabase.from('users').upsert(sanitized, { onConflict: 'id' });
-      return !error;
+      const sanitized = users.map(u => cleanForSupabase(u));
+      const chunkSize = 200;
+      for (let i = 0; i < sanitized.length; i += chunkSize) {
+        const chunk = sanitized.slice(i, i + chunkSize);
+        const { error } = await supabase.from('users').upsert(chunk, { onConflict: 'id' });
+        if (error) {
+          console.error("Erro no chunk users:", error.message);
+          return false;
+        }
+      }
+      return true;
     } catch (e) { return false; }
   },
 
@@ -61,10 +69,10 @@ export const DataService = {
     localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
     try {
       if (!profiles || profiles.length === 0) return true;
-      
+
       const sanitized = profiles.map(p => cleanForSupabase(p));
       const { error } = await supabase.from('profiles').upsert(sanitized, { onConflict: 'id' });
-      
+
       if (error) {
         console.error("Erro Supabase:", error.message);
         return false;
@@ -113,5 +121,77 @@ export const DataService = {
   saveRememberMe: (email: string, password: string) => {
     localStorage.setItem('nebula_auth_remember', Security.encrypt({ email, password, timestamp: Date.now() }));
   },
-  clearRememberMe: () => localStorage.removeItem('nebula_auth_remember')
+  clearRememberMe: () => localStorage.removeItem('nebula_auth_remember'),
+
+  updateSingleUser: async (user: User): Promise<boolean> => {
+    try {
+      const sanitized = cleanForSupabase(user);
+      const { error } = await supabase.from('users').upsert(sanitized, { onConflict: 'id' });
+      if (error) return false;
+      const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
+      const updated = cached.map((u: User) => u.id === user.id ? user : u);
+      if (!cached.find((u: User) => u.id === user.id)) updated.push(user);
+      localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
+      return true;
+    } catch (e) { return false; }
+  },
+
+  updateSingleProfile: async (profileId: string, updates: Partial<Profile>): Promise<boolean> => {
+    try {
+      const sanitized = cleanForSupabase(updates);
+      const { error } = await supabase.from('profiles').update(sanitized).eq('id', profileId);
+      if (error) return false;
+      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
+      const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, ...updates } : p);
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
+      return true;
+    } catch (e) { return false; }
+  },
+
+  updateProfileSessionData: async (profileId: string, sessionData: any): Promise<boolean> => {
+    try {
+      const { error } = await supabase.from('profiles').update({ cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' }).eq('id', profileId);
+      if (error) return false;
+      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
+      const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' } : p);
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
+      return true;
+    } catch (e) { return false; }
+  },
+
+  getProfileSessionData: async (profileId: string): Promise<any> => {
+    try {
+      const { data, error } = await supabase.from('profiles').select('cookies, localStorage').eq('id', profileId).single();
+      if (error || !data) return null;
+      return data;
+    } catch (e) { return null; }
+  },
+
+  deleteAllMembers: async (): Promise<boolean> => {
+    try {
+      const { error } = await supabase.from('users').delete().eq('role', 'MEMBER');
+      if (error) return false;
+      const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
+      const updated = cached.filter((u: User) => u.role !== 'MEMBER');
+      localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
+      return true;
+    } catch (e) { return false; }
+  },
+
+  invalidateCache: () => {
+    localStorage.removeItem('nebula_users_v1');
+    localStorage.removeItem('nebula_profiles_v1');
+    localStorage.removeItem('nebula_settings_v1');
+  },
+
+  ping: async (): Promise<{ success: boolean; latency: number }> => {
+    const start = Date.now();
+    try {
+      const { error } = await supabase.from('settings').select('id').limit(1);
+      if (error) return { success: false, latency: 0 };
+      return { success: true, latency: Date.now() - start };
+    } catch (e) {
+      return { success: false, latency: 0 };
+    }
+  }
 };

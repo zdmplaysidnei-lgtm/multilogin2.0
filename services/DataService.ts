@@ -10,6 +10,36 @@ const prepareForSupabase = (obj: any) => {
   }));
 };
 
+// 🔥 FIX SCHEMA: Ocultar dados novos na coluna fingerprint do JSONB do DB.
+const packProfileForSupabase = (profile: any) => {
+  const p = prepareForSupabase(profile);
+  if (!p.fingerprint) p.fingerprint = {};
+  // Salva props problemáticos (que não tem coluna dedicada) dento da coluna fingerprint (jsonb)
+  p.fingerprint.useNativeBrowser = p.useNativeBrowser;
+  p.fingerprint.useExternalBrowserUI = p.useExternalBrowserUI;
+  p.fingerprint.enableExtensions = p.enableExtensions;
+  p.fingerprint.disableAppMode = p.disableAppMode; // legado fallback
+
+  delete p.useNativeBrowser;
+  delete p.useExternalBrowserUI;
+  delete p.enableExtensions;
+  delete p.disableAppMode;
+  return p;
+};
+
+// 🔥 LOAD SCHEMA: Restaura dados embutidos na coluna fingerprint.
+const unpackProfileFromSupabase = (p: any) => {
+  if (p && p.fingerprint) {
+    if (p.fingerprint.useNativeBrowser !== undefined) p.useNativeBrowser = p.fingerprint.useNativeBrowser;
+    if (p.fingerprint.useExternalBrowserUI !== undefined) p.useExternalBrowserUI = p.fingerprint.useExternalBrowserUI;
+    if (p.fingerprint.enableExtensions !== undefined) p.enableExtensions = p.fingerprint.enableExtensions;
+    if (p.fingerprint.disableAppMode !== undefined && p.useExternalBrowserUI === undefined) {
+      p.useExternalBrowserUI = p.fingerprint.disableAppMode;
+    }
+  }
+  return p;
+};
+
 // ============================================
 // CACHE DE COLUNAS VÁLIDAS DO SUPABASE
 // Detecta automaticamente quais colunas existem
@@ -191,7 +221,8 @@ export const DataService = {
 
       // 🔥 CRITICAL: Agora pega os users da cloud com paginação!
       const cloudUsers = (allUsers && allUsers.length > 0) ? allUsers : (cachedUsers || MOCK_USERS);
-      const cloudProfiles = pRes.data || cachedProfiles || MOCK_PROFILES;
+      const rawCloudProfiles = pRes.data || cachedProfiles || MOCK_PROFILES;
+      const cloudProfiles = rawCloudProfiles.map((p: any) => unpackProfileFromSupabase(p));
       const cloudSettings = sRes.data?.config || cachedSettings || INITIAL_SETTINGS;
 
       console.log(`✅ Supabase: ${cloudUsers.length} usuários, ${cloudProfiles.length} profiles carregados`);
@@ -249,7 +280,7 @@ export const DataService = {
 
       if (error) throw error;
 
-      const profiles = data || [];
+      const profiles = (data || []).map((p: any) => unpackProfileFromSupabase(p));
 
       // Atualizar cache com todos os profiles
       memoryCache.profiles = profiles;
@@ -413,7 +444,7 @@ export const DataService = {
       const BATCH_SIZE = 3;
       for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
         const batch = profiles.slice(i, i + BATCH_SIZE);
-        const sanitized = batch.map(p => prepareForSupabase(p));
+        const sanitized = batch.map(p => packProfileForSupabase(p));
 
         const { error } = await supabase
           .from('profiles')

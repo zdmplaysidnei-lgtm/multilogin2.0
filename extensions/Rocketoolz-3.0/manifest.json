@@ -1,0 +1,107 @@
+{
+    "manifest_version": 3,
+    "name": "Rocketoolz",
+    "description": "#1 Beast Group Buy SEO Tools Provider. Rocketoolz Extension lets you access any SEO tool from Rocketoolz dashboard",
+    "version": "3.0",
+    "icons": {
+        "16": "src/icon.png",
+        "32": "src/icon.png",
+        "48": "src/icon.png",
+        "128": "src/icon.png"
+    },
+    "action": {
+        "default_popup": "./src/popup.html",
+        "default_icon": {
+            "16": "src/icon.png",
+            "32": "src/icon.png",
+            "48": "src/icon.png",
+            "128": "src/icon.png"
+        }
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "lib/jquery-v3.3.1.min.js",
+                "content-script.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": true
+        },
+        {
+            "matches": [
+                "*://*/*"
+            ],
+            "js": [
+                "./src/popup.js"
+            ],
+            "run_at": "document_end",
+            "all_frames": true
+        }
+    ],
+    "permissions": [
+        "tabs",
+        "storage",
+        "unlimitedStorage",
+        "alarms",
+        "windows",
+        "activeTab",
+        "cookies",
+        "management",
+        "browsingData",
+        "proxy",
+        "webRequest",
+        "webRequestAuthProvider",
+        "webNavigation",
+        "declarativeNetRequest",
+        "declarativeNetRequestWithHostAccess",
+        "declarativeNetRequestFeedback",
+        "scripting",
+        "contextMenus",
+        "downloads"
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "lib/crypto-js.min.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        },
+        {
+            "resources": [
+                "src/icon.png"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
+    "declarative_net_request": {
+        "rule_resources": [
+            {
+                "id": "ruleset_1",
+                "enabled": true,
+                "path": "rules.json"
+            }
+        ]
+    },
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "incognito": "split",
+    "externally_connectable": {
+        "matches": [
+            "https://dash.rocketoolz.com/*"
+        ],
+        "ids": [
+            "*"
+        ]
+    }
+}
