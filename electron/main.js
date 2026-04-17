@@ -1174,7 +1174,9 @@ function registerIPCHandlers() {
                         await proxyChain.closeAnonymizedProxy(activeProxies.get(profile.id), true);
                     }
                     console.log(`🔄 [NATIVO] Criando proxy anônimo para: ${profile.proxy}`);
-                    const anonymizedProxy = await proxyChain.anonymizeProxy(profile.proxy);
+                    const proxyPromise = proxyChain.anonymizeProxy(profile.proxy);
+                    const timeoutPromise = new Promise((_, r) => setTimeout(() => r(new Error('Proxy timeout')), 5000));
+                    const anonymizedProxy = await Promise.race([proxyPromise, timeoutPromise]);
                     proxyUrl = anonymizedProxy;
                     activeProxies.set(profile.id, anonymizedProxy);
                     console.log(`✅ [NATIVO] Proxy anônimo criado: ${anonymizedProxy}`);
@@ -1861,7 +1863,7 @@ function registerIPCHandlers() {
             const page = pages.length > 0 ? pages[0] : await browser.newPage();
 
             // 🔥 ANTI-DETECÇÃO: Injeta scripts que escondem automação Puppeteer de TODOS os sites
-            await page.evaluateOnNewDocument(() => {
+            const antiDetectFn = () => {
                 // Remove navigator.webdriver (principal flag de detecção)
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
                 delete navigator.__proto__.webdriver;
@@ -1894,7 +1896,9 @@ function registerIPCHandlers() {
                             ? Promise.resolve({ state: Notification.permission })
                             : originalQuery(parameters);
                 }
-            });
+            };
+            await page.evaluateOnNewDocument(antiDetectFn);
+            await page.evaluate(antiDetectFn).catch(e => { });
             console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados na página principal`);
 
             // 🔒 AUTO-DISMISS: Fecha popup "Salvar Senha" via CDP (só no primeiro login)
@@ -1966,7 +1970,7 @@ function registerIPCHandlers() {
             if (profile.email && profile.password) {
                 const autoFillEmail = profile.email;
                 const autoFillPass = profile.password;
-                await page.evaluateOnNewDocument((email, pass) => {
+                const autoFillFn = (email, pass) => {
                     // Aguarda a página carregar e tenta preencher
                     function tryAutoFill() {
                         // Procura campo de email
@@ -2050,7 +2054,9 @@ function registerIPCHandlers() {
                     }, 200);
                     // Para o observer após 15 segundos
                     setTimeout(() => observer.disconnect(), 15000);
-                }, autoFillEmail, autoFillPass);
+                };
+                await page.evaluateOnNewDocument(autoFillFn, autoFillEmail, autoFillPass);
+                await page.evaluate(autoFillFn, autoFillEmail, autoFillPass).catch(e => { });
                 console.log(`📝 [AUTO-FILL] Script de auto-preenchimento injetado para: ${profile.email}`);
             }
 
@@ -2371,7 +2377,7 @@ function registerIPCHandlers() {
             activePuppeteerInstances.set(profile.id, { browser, page });
 
             // 📥 ANCORA CDP PARA DOWNLOADS (Modo Nativo)
-            await attachCDPDownloadListener(browser);
+            attachCDPDownloadListener(browser).catch(e => console.error("Erro CDP Download", e));
 
             // 🔥 CRIA JANELA OVERLAY COM BOTÕES FLUTUANTES
             createFloatingButtons(profile.id);
@@ -2450,7 +2456,9 @@ function registerIPCHandlers() {
                     // Cria URL de proxy no formato correto para proxy-chain
                     // proxy-chain aceita: http://user:pass@ip:port ou socks5://user:pass@ip:port
                     console.log(`🔄 Criando proxy anônimo para: ${profile.proxy}`);
-                    const anonymizedProxy = await proxyChain.anonymizeProxy(profile.proxy);
+                    const proxyPromise = proxyChain.anonymizeProxy(profile.proxy);
+                    const timeoutPromise = new Promise((_, r) => setTimeout(() => r(new Error('Proxy timeout')), 5000));
+                    const anonymizedProxy = await Promise.race([proxyPromise, timeoutPromise]);
                     proxyUrl = anonymizedProxy;
                     activeProxies.set(profile.id, anonymizedProxy);
                     console.log(`✅ Proxy anônimo criado: ${anonymizedProxy}`);
@@ -2957,7 +2965,7 @@ function registerIPCHandlers() {
             });
 
             // 📥 ANCORA CDP PARA DOWNLOADS (Modo Antigo)
-            await attachCDPDownloadListener(browser);
+            attachCDPDownloadListener(browser).catch(e => console.error("Erro CDP Download", e));
 
             return { status: 'success' };
         } catch (e) {

@@ -599,13 +599,23 @@ const App: React.FC = () => {
                setLaunchingStatus({ isLaunching: true, message: '🚀 Abrindo navegador...', profileName: profile.name });
             }
 
-            res = await window.nebulaAPI.launchProfileNative(profile, settings?.customBrowserPath);
+            try {
+               res = await window.nebulaAPI.launchProfileNative(profile, settings?.customBrowserPath);
+            } catch (error) {
+               console.error('IPC Falha NATIVA', error);
+               res = { status: 'error', message: (error as Error).message };
+            }
          } else {
             setLaunchingStatus({ isLaunching: true, message: '🚀 Abrindo navegador...', profileName: profile.name });
-            res = await window.nebulaAPI.launchProfile(profile, settings?.customBrowserPath);
+            try {
+               res = await window.nebulaAPI.launchProfile(profile, settings?.customBrowserPath);
+            } catch (error) {
+               console.error('IPC Falha NON-NATIVE', error);
+               res = { status: 'error', message: (error as Error).message };
+            }
          }
 
-         // 🔄 FINALIZA STATUS DE CARREGAMENTO
+         // 🔄 FINALIZA STATUS DE CARREGAMENTO (Garantido pelo fluxo linear agora c/ block try/catch pro IPC invoke!)
          setLaunchingStatus({ isLaunching: false, message: '' });
 
          if (res.status === 'success') setToast({ msg: `${profile.name} aberto com sucesso!`, type: 'success' });
