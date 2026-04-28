@@ -18,11 +18,13 @@ const packProfileForSupabase = (profile: any) => {
   p.fingerprint.useNativeBrowser = p.useNativeBrowser;
   p.fingerprint.useExternalBrowserUI = p.useExternalBrowserUI;
   p.fingerprint.enableExtensions = p.enableExtensions;
+  p.fingerprint.secureAppMode = p.secureAppMode; // 🛡️ Modo App Seguro
   p.fingerprint.disableAppMode = p.disableAppMode; // legado fallback
 
   delete p.useNativeBrowser;
   delete p.useExternalBrowserUI;
   delete p.enableExtensions;
+  delete p.secureAppMode;
   delete p.disableAppMode;
   return p;
 };
@@ -33,6 +35,7 @@ const unpackProfileFromSupabase = (p: any) => {
     if (p.fingerprint.useNativeBrowser !== undefined) p.useNativeBrowser = p.fingerprint.useNativeBrowser;
     if (p.fingerprint.useExternalBrowserUI !== undefined) p.useExternalBrowserUI = p.fingerprint.useExternalBrowserUI;
     if (p.fingerprint.enableExtensions !== undefined) p.enableExtensions = p.fingerprint.enableExtensions;
+    if (p.fingerprint.secureAppMode !== undefined) p.secureAppMode = p.fingerprint.secureAppMode; // 🛡️
     if (p.fingerprint.disableAppMode !== undefined && p.useExternalBrowserUI === undefined) {
       p.useExternalBrowserUI = p.fingerprint.disableAppMode;
     }

@@ -61,6 +61,7 @@ export interface Profile {
   localStorage?: string;
   customExtensionPath?: string;
   enableExtensions?: boolean; // 🧩 Ativa extensões neste perfil (mostra toolbar com ícones)
+  secureAppMode?: boolean;    // 🛡️ Modo App Seguro (CF Bypass, sem barra, F12 bloqueado, autofill)
   videoTutorial?: string;
 }
 

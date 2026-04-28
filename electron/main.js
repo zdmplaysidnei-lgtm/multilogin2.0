@@ -1089,8 +1089,9 @@ function registerIPCHandlers() {
                             // Chave g/v pode não existir, tudo bem
                         }
                     } else {
-                        // 🔒 SEM EXTENSÕES: Desabilita Developer Tools via Policy
-                        execSync(`reg add "${regPath}" /v DeveloperToolsAvailability /t REG_DWORD /d 2 /f`, { stdio: 'ignore' });
+                        // 🔒 SEM EXTENSÕES: NÃO aplica mais a policy global de DevTools
+                        // (remover a linha abaixo impede que o Chrome pessoal do usuário seja bloqueado)
+                        // execSync(`reg add "${regPath}" /v DeveloperToolsAvailability /t REG_DWORD /d 2 /f`, { stdio: 'ignore' });
                         console.log(`🔒 [REGISTRY] Policies do Chrome aplicadas via Registro do Windows`);
                     }
                 } catch (regErr) {
@@ -1214,6 +1215,7 @@ function registerIPCHandlers() {
                 'heygen.com', 'app.heygen.com',   // HeyGen - OAuth (Google/Apple/SSO/Email)
                 // 🔥 SITES COM PROTEÇÃO ANTI-BOT AVANÇADA (pulam pré-login)
                 'dankicode.com', 'cursos.dankicode.com',  // DankiCode - Anti-bot
+                'geminigen.ai',                            // GeminiGen AI - Cloudflare Turnstile
                 // 🚀 SITES COM EXTENSÃO DEDICADA (a extensão cuida da autenticação)
                 'rocketoolz.com', 'dash.rocketoolz.com',  // Rocketoolz - autenticação via extensão
             ];
@@ -1752,10 +1754,10 @@ function registerIPCHandlers() {
                 '--disable-save-password-bubble',
                 '--no-pings',
                 // 🔥 ANTI-DETECÇÃO
-                '--disable-blink-features=AutomationControlled',
+                // '--disable-blink-features=AutomationControlled' removido: Cloudflare detecta como bot
                 '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
+                // '--no-sandbox' removido: Cloudflare Turnstile detecta como bot no Windows
+                // '--disable-setuid-sandbox' removido: idem acima
             ];
 
             // 🧩 CARREGA EXTENSÕES VIA --load-extension (se ativado)
@@ -1803,10 +1805,123 @@ function registerIPCHandlers() {
 
             let browser;
             console.log(`🔍 [DEBUG] shouldLoadExtensions=${shouldLoadExtensions}, extensionsList.length=${extensionsList.length}`);
+
+            // 🛡️ MODO APP SEGURO: Ativado via flag no perfil OU pelo domínio geminigen.ai (retrocompatibilidade)
+            const cloudflareSites = ['geminigen.ai'];
+            const isCloudflareProtected = profile.secureAppMode ||
+                cloudflareSites.some(site => (targetUrls[0] || '').toLowerCase().includes(site));
+
+            if (isCloudflareProtected) {
+                console.log(`🛡️ [CF-BYPASS] Cloudflare detectado. Lançando Chrome com debug port...`);
+                const { spawn } = require('child_process');
+                const cfUrl = smartUrls[0] || targetUrls[0];
+                // Porta única por perfil: evita conflito quando múltiplos perfis "Modo App Seguro" estão abertos
+                const cfPortBase = 9200;
+                const cfPortRange = 80; // portas 9200–9279
+                const cfPortSeed = profile.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+                const cfDebugPort = cfPortBase + (cfPortSeed % cfPortRange);
+                console.log(`🔌 [CF-BYPASS] Porta única para perfil ${profile.id}: ${cfDebugPort}`);
+
+                const cfArgs = [
+                    `--user-data-dir=${userDataDir}`,
+                    `--remote-debugging-port=${cfDebugPort}`,
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-infobars',
+                    `--app=${cfUrl}`  // 🖼️ Modo App: sem barra de endereço
+                ];
+
+                const cfProcess = spawn(executablePath, cfArgs, { detached: false, stdio: 'ignore' });
+                console.log(`✅ [CF-BYPASS] Chrome PID=${cfProcess.pid} com debug port ${cfDebugPort}`);
+
+                // 🔑 FASE 2: Após CF passar, conecta CDP e injeta autofill (sem webdriver flag)
+                if (profile.email && profile.password) {
+                    const cfEmail = profile.email;
+                    const cfPass = profile.password;
+                    setTimeout(async () => {
+                        try {
+                            console.log(`🔌 [CF-AUTOFILL] Conectando ao Chrome via CDP porta ${cfDebugPort}...`);
+                            const cfBrowser = await puppeteer.connect({
+                                browserURL: `http://localhost:${cfDebugPort}`,
+                                defaultViewport: null
+                            });
+                            const cfPages = await cfBrowser.pages();
+                            // Pega a página que contém a URL de destino, ou a primeira disponível
+                            const cfTargetDomain = new URL(cfUrl).hostname;
+                            const cfPage = cfPages.find(p => p.url().includes(cfTargetDomain)) || cfPages[0];
+                            if (cfPage) {
+                                // Aguarda a página estabilizar (evita auto-fill antes do redirect)
+                                try { await cfPage.waitForNavigation({ timeout: 3000, waitUntil: 'networkidle2' }); } catch (_) { }
+
+                                await cfPage.evaluate((em, pw) => {
+                                    function setVal(el, v) {
+                                        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                        setter.call(el, v);
+                                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    }
+                                    function tryFill() {
+                                        // Email: seletores específicos + fallback para qualquer input visível não-senha
+                                        const eIn = document.querySelector(
+                                            'input[type="email"], input[name="email"], input[id*="email"], ' +
+                                            'input[autocomplete*="email"], input[autocomplete="username"]'
+                                        ) || Array.from(document.querySelectorAll(
+                                            'input:not([type="password"]):not([type="hidden"]):not([type="checkbox"])'
+                                        )).find(el => el.offsetParent !== null);
+                                        const pIn = document.querySelector('input[type="password"]');
+                                        if (eIn && !eIn.value) setVal(eIn, em);
+                                        if (pIn && !pIn.value) setVal(pIn, pw);
+
+                                        // 🔒 Esconde o olhinho de revelar senha
+                                        if (!document.getElementById('ml-hide-eye')) {
+                                            const s = document.createElement('style');
+                                            s.id = 'ml-hide-eye';
+                                            s.textContent = `
+                                                button[aria-label*="password" i],
+                                                button[aria-label*="senha" i],
+                                                input[type="password"] ~ button,
+                                                input[type="password"] ~ span button,
+                                                input[type="password"] + button,
+                                                input[type="password"] ~ * > button,
+                                                [data-testid*="password"] button,
+                                                [class*="password"] button { display: none !important; }
+                                            `;
+                                            document.head.appendChild(s);
+                                        }
+                                    }
+
+                                    tryFill();
+                                    [500, 1500, 3000].forEach(d => setTimeout(tryFill, d));
+
+                                    // 🔒 BLOQUEIA F12, Ctrl+Shift+I e botão direito
+                                    document.addEventListener('keydown', function (e) {
+                                        if (
+                                            e.key === 'F12' ||
+                                            (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key)) ||
+                                            (e.ctrlKey && e.key === 'U')
+                                        ) { e.preventDefault(); e.stopPropagation(); }
+                                    }, true);
+                                    document.addEventListener('contextmenu', function (e) {
+                                        e.preventDefault();
+                                    }, true);
+                                }, cfEmail, cfPass);
+
+                                console.log(`✅ [CF-AUTOFILL] Auto-fill injetado para: ${cfEmail}`);
+                            }
+                            await cfBrowser.disconnect();
+                        } catch (cfErr) {
+                            console.warn(`⚠️ [CF-AUTOFILL] Erro ao auto-fill:`, cfErr.message);
+                        }
+                    }, 7000); // 7s: tempo para CF challenge completar
+                }
+
+                cfProcess.unref();
+                return { success: true, pid: cfProcess.pid, cfBypass: true };
+            }
+
+
             if (shouldLoadExtensions && extensionsList.length > 0) {
                 // 🚀 PUPPETEER.LAUNCH com --enable-unsafe-extension-debugging
-                // Chrome 137+ removeu --load-extension. A alternativa oficial é CDP Extensions.loadUnpacked
-                // que só funciona quando o Puppeteer gerencia o processo Chrome diretamente (não via connect)
                 console.log(`🚀 [NATIVO] Lançando Chrome com suporte a CDP Extensions`);
                 console.log(`🔌 [NATIVO] Extensões a carregar: ${JSON.stringify(extensionsList)}`);
 
@@ -1816,19 +1931,17 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    // Remove flags que bloqueiam extensões
-                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
+                    // Puppeteer injeta --disable-blink-features=AutomationControlled por padrão
+                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled'],
                     args: [
                         ...chromeArgs,
-                        '--enable-unsafe-extension-debugging',  // Habilita Extensions.loadUnpacked via CDP
+                        '--enable-unsafe-extension-debugging',
                         '--enable-features=ExtensionsToolbarMenu',
                     ]
                 });
 
                 console.log(`✅ [NATIVO] Chrome lançado com suporte a extensões!`);
 
-                // 🧩 CARREGA EXTENSÕES VIA CDP Extensions.loadUnpacked
-                // Chrome 137+ removeu --load-extension do chrome.exe oficial
                 try {
                     const cdpClient = await browser.target().createCDPSession();
                     for (const extPath of extensionsList) {
@@ -1852,7 +1965,7 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection'],
+                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled'],
                     args: chromeArgs
                 });
             }
@@ -2487,12 +2600,12 @@ function registerIPCHandlers() {
                 '--disable-popup-blocking',
                 '--disable-translate',
                 '--disable-dev-tools', // 🔒 Proteção F12
-                // 🔥 ANTI-DETECÇÃO: Impede sites de detectar automação Puppeteer
-                '--disable-blink-features=AutomationControlled',
+                // 🔥 Removidos flags detectados pelo Cloudflare Turnstile como bot:
+                // '--disable-blink-features=AutomationControlled' → detectado pelo CF
+                // '--no-sandbox' → detectado pelo CF no Windows
+                // '--disable-setuid-sandbox' → detectado pelo CF no Windows
                 '--disable-features=IsolateOrigins,site-per-process',
                 '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
                 // Proxy se configurado
                 proxyUrl ? `--proxy-server=${proxyUrl}` : ''
             ].filter(Boolean);

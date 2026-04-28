@@ -566,10 +566,10 @@ const App: React.FC = () => {
          // 🔄 INICIA STATUS DE CARREGAMENTO
          setLaunchingStatus({ isLaunching: true, message: 'Preparando navegador...', profileName: profile.name });
 
-         // Usa modo NATIVO (com DRM) se useNativeBrowser estiver habilitado
+         // Usa modo NATIVO (com DRM e CF-Bypass) se useNativeBrowser, useExternalBrowserUI, ou secureAppMode estiverem habilitados
          // Caso contrário, usa Puppeteer (com auto-fill mas sem DRM)
          let res;
-         if ((profile.useNativeBrowser || profile.useExternalBrowserUI) && window.nebulaAPI.launchProfileNative) {
+         if ((profile.useNativeBrowser || profile.useExternalBrowserUI || profile.secureAppMode) && window.nebulaAPI.launchProfileNative) {
             // 🔥 CLOUD SYNC: Verifica se existe sessão na Cloud e injeta antes de abrir
             try {
                setLaunchingStatus({ isLaunching: true, message: '☁️ Verificando sessão na Cloud...', profileName: profile.name });
@@ -743,6 +743,7 @@ const App: React.FC = () => {
             useNativeBrowser: fd.get('useNativeBrowser') === 'on', // Habilita DRM (HBO Max, Netflix)
             useExternalBrowserUI: fd.get('useExternalBrowserUI') === 'on',
             enableExtensions: fd.get('enableExtensions') === 'on', // Habilita Extensão Rocketoolz
+            secureAppMode: fd.get('secureAppMode') === 'on', // 🛡️ Modo App Seguro (CF Bypass)
             coverImage: String(fd.get('coverImage') || ''),
             loginType: editingProfile?.loginType || 'cookies', email: String(fd.get('email') || ''),
             password: String(fd.get('password') || ''), cookies: String(fd.get('cookies') || ''),
@@ -1487,6 +1488,13 @@ const App: React.FC = () => {
                         <div className="flex flex-col">
                            <label htmlFor="enableExtensions" className="text-sm font-bold text-blue-400 cursor-pointer">🚀 Extensão Rocketoolz</label>
                            <span className="text-[9px] text-gray-500">Carrega a extensão "Rocketoolz" juntamente com o login do serviço</span>
+                        </div>
+                     </div>
+                     <div className="flex items-center gap-4 bg-green-900/10 border border-green-500/30 rounded-2xl p-4">
+                        <input type="checkbox" name="secureAppMode" id="secureAppMode" defaultChecked={(editingProfile as any)?.secureAppMode} className="w-5 h-5 accent-green-500" />
+                        <div className="flex flex-col">
+                           <label htmlFor="secureAppMode" className="text-sm font-bold text-green-400 cursor-pointer">🛡️ Modo App Seguro</label>
+                           <span className="text-[9px] text-gray-500">Abre em Modo App (sem barra de endereço), bloqueia F12/DevTools, preenche email e senha automaticamente e oculta o olhinho da senha</span>
                         </div>
                      </div>
                      <div className="space-y-1">
