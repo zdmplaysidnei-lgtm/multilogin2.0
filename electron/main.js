@@ -1834,86 +1834,114 @@ function registerIPCHandlers() {
                 const cfProcess = spawn(executablePath, cfArgs, { detached: false, stdio: 'ignore' });
                 console.log(`✅ [CF-BYPASS] Chrome PID=${cfProcess.pid} com debug port ${cfDebugPort}`);
 
-                // 🔑 FASE 2: Após CF passar, conecta CDP e injeta autofill (sem webdriver flag)
-                if (profile.email && profile.password) {
-                    const cfEmail = profile.email;
-                    const cfPass = profile.password;
-                    setTimeout(async () => {
-                        try {
-                            console.log(`🔌 [CF-AUTOFILL] Conectando ao Chrome via CDP porta ${cfDebugPort}...`);
-                            const cfBrowser = await puppeteer.connect({
-                                browserURL: `http://localhost:${cfDebugPort}`,
-                                defaultViewport: null
-                            });
-                            const cfPages = await cfBrowser.pages();
-                            // Pega a página que contém a URL de destino, ou a primeira disponível
-                            const cfTargetDomain = new URL(cfUrl).hostname;
-                            const cfPage = cfPages.find(p => p.url().includes(cfTargetDomain)) || cfPages[0];
-                            if (cfPage) {
-                                // Aguarda a página estabilizar (evita auto-fill antes do redirect)
-                                try { await cfPage.waitForNavigation({ timeout: 3000, waitUntil: 'networkidle2' }); } catch (_) { }
+                // 🔑 FASE 2: Após CF passar, conecta CDP, injeta proteção/autofill e abre demais URLs
+                setTimeout(async () => {
+                    try {
+                        console.log(`🔌 [CF-PHASE2] Conectando ao Chrome via CDP porta ${cfDebugPort}...`);
+                        const cfBrowser = await puppeteer.connect({
+                            browserURL: `http://localhost:${cfDebugPort}`,
+                            defaultViewport: null
+                        });
 
-                                await cfPage.evaluate((em, pw) => {
-                                    function setVal(el, v) {
-                                        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                        setter.call(el, v);
-                                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        const cfEmail = profile.email || '';
+                        const cfPass = profile.password || '';
+
+                        // Função de proteção e autofill
+                        const injectAll = async (targetPage) => {
+                            try {
+                                const protectAndFillFn = (em, pw) => {
+                                    if (!window.mlProtectionInjected) {
+                                        window.mlProtectionInjected = true;
+                                        // Esconde olho
+                                        const s = document.createElement('style');
+                                        s.id = 'ml-hide-eye';
+                                        s.textContent = `
+                                            button[aria-label*="password" i], button[aria-label*="senha" i],
+                                            input[type="password"] ~ button, input[type="password"] ~ span button,
+                                            input[type="password"] + button, input[type="password"] ~ * > button,
+                                            [data-testid*="password"] button, [class*="password"] button { display: none !important; }
+                                        `;
+                                        if (document.head) document.head.appendChild(s);
+                                        else document.addEventListener('DOMContentLoaded', () => document.head.appendChild(s));
+
+                                        // Bloqueios F12 e Botão Direito
+                                        document.addEventListener('keydown', function (e) {
+                                            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key)) || (e.ctrlKey && e.key === 'U')) { e.preventDefault(); e.stopPropagation(); }
+                                        }, true);
+                                        document.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
                                     }
-                                    function tryFill() {
-                                        // Email: seletores específicos + fallback para qualquer input visível não-senha
-                                        const eIn = document.querySelector(
-                                            'input[type="email"], input[name="email"], input[id*="email"], ' +
-                                            'input[autocomplete*="email"], input[autocomplete="username"]'
-                                        ) || Array.from(document.querySelectorAll(
-                                            'input:not([type="password"]):not([type="hidden"]):not([type="checkbox"])'
-                                        )).find(el => el.offsetParent !== null);
-                                        const pIn = document.querySelector('input[type="password"]');
-                                        if (eIn && !eIn.value) setVal(eIn, em);
-                                        if (pIn && !pIn.value) setVal(pIn, pw);
 
-                                        // 🔒 Esconde o olhinho de revelar senha
-                                        if (!document.getElementById('ml-hide-eye')) {
-                                            const s = document.createElement('style');
-                                            s.id = 'ml-hide-eye';
-                                            s.textContent = `
-                                                button[aria-label*="password" i],
-                                                button[aria-label*="senha" i],
-                                                input[type="password"] ~ button,
-                                                input[type="password"] ~ span button,
-                                                input[type="password"] + button,
-                                                input[type="password"] ~ * > button,
-                                                [data-testid*="password"] button,
-                                                [class*="password"] button { display: none !important; }
-                                            `;
-                                            document.head.appendChild(s);
+                                    if (em && pw) {
+                                        function setVal(el, v) {
+                                            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                            setter.call(el, v);
+                                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                                            el.dispatchEvent(new Event('change', { bubbles: true }));
                                         }
+                                        function tryFill() {
+                                            const eIn = document.querySelector('input[type="email"], input[name="email"], input[id*="email"], input[autocomplete*="email"], input[autocomplete="username"]') || Array.from(document.querySelectorAll('input:not([type="password"]):not([type="hidden"]):not([type="checkbox"])')).find(el => el.offsetParent !== null);
+                                            const pIn = document.querySelector('input[type="password"]');
+                                            if (eIn && !eIn.value) setVal(eIn, em);
+                                            if (pIn && !pIn.value) setVal(pIn, pw);
+                                        }
+                                        tryFill();
+                                        [500, 1500, 3000].forEach(d => setTimeout(tryFill, d));
                                     }
+                                };
 
-                                    tryFill();
-                                    [500, 1500, 3000].forEach(d => setTimeout(tryFill, d));
+                                await targetPage.evaluateOnNewDocument(protectAndFillFn, cfEmail, cfPass);
+                                await targetPage.evaluate(protectAndFillFn, cfEmail, cfPass).catch(() => {});
+                            } catch (e) {}
+                        };
 
-                                    // 🔒 BLOQUEIA F12, Ctrl+Shift+I e botão direito
-                                    document.addEventListener('keydown', function (e) {
-                                        if (
-                                            e.key === 'F12' ||
-                                            (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key)) ||
-                                            (e.ctrlKey && e.key === 'U')
-                                        ) { e.preventDefault(); e.stopPropagation(); }
-                                    }, true);
-                                    document.addEventListener('contextmenu', function (e) {
-                                        e.preventDefault();
-                                    }, true);
-                                }, cfEmail, cfPass);
-
-                                console.log(`✅ [CF-AUTOFILL] Auto-fill injetado para: ${cfEmail}`);
-                            }
-                            await cfBrowser.disconnect();
-                        } catch (cfErr) {
-                            console.warn(`⚠️ [CF-AUTOFILL] Erro ao auto-fill:`, cfErr.message);
+                        const cfPages = await cfBrowser.pages();
+                        
+                        // 1. Injeta proteção na página principal que já está aberta
+                        const cfTargetDomain = new URL(cfUrl).hostname;
+                        const mainPage = cfPages.find(p => p.url().includes(cfTargetDomain)) || cfPages[0];
+                        if (mainPage) {
+                            try { await mainPage.waitForNavigation({ timeout: 3000, waitUntil: 'networkidle2' }); } catch (_) {}
+                            await injectAll(mainPage);
+                            console.log(`✅ [CF-PHASE2] Proteção e Auto-fill aplicados na aba principal`);
                         }
-                    }, 7000); // 7s: tempo para CF challenge completar
-                }
+
+                        // 2. Abre as demais URLs caso o usuário tenha configurado múltiplas
+                        if (targetUrls.length > 1) {
+                            console.log(`🚀 [CF-PHASE2] Abrindo ${targetUrls.length - 1} abas extras configuradas no perfil...`);
+                            for (let i = 1; i < targetUrls.length; i++) {
+                                try {
+                                    // A nova página abrirá como um popup sem barra de endereço graças ao Modo App
+                                    const extraPage = await cfBrowser.newPage();
+                                    await injectAll(extraPage);
+                                    await extraPage.goto(targetUrls[i], { waitUntil: 'domcontentloaded' });
+                                } catch (e) {
+                                    console.warn(`⚠️ Erro ao abrir aba extra ${targetUrls[i]}:`, e.message);
+                                }
+                            }
+                        }
+
+                        // 3. Monitora NOVAS ABAS (Ex: Magic Links clicados via E-mail)
+                        cfBrowser.on('targetcreated', async (target) => {
+                            if (target.type() === 'page') {
+                                try {
+                                    const newPage = await target.page();
+                                    if (newPage) {
+                                        console.log(`🔄 [CF-PHASE2] Nova aba detectada (ex: Magic Link). Aplicando proteção...`);
+                                        await injectAll(newPage);
+                                    }
+                                } catch (e) {}
+                            }
+                        });
+
+                        // Não desconectamos mais o cfBrowser para que o 'targetcreated' continue ouvindo
+                        // e protegendo novas abas durante toda a vida do navegador.
+                        // Salva instância para fechamento posterior, se necessário
+                        activePuppeteerInstances.set(profile.id, { browser: cfBrowser, page: mainPage });
+
+                    } catch (cfErr) {
+                        console.warn(`⚠️ [CF-PHASE2] Erro na injeção secundária:`, cfErr.message);
+                    }
+                }, 7000); // 7s: tempo para CF challenge completar
 
                 cfProcess.unref();
                 return { success: true, pid: cfProcess.pid, cfBypass: true };
