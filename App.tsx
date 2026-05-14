@@ -67,6 +67,7 @@ const App: React.FC = () => {
    const profilesContainerRef = useRef<HTMLDivElement>(null);
    const [sortOrder, setSortOrder] = useState<'manual' | 'az' | 'za'>('manual');
    const [selectedResellerId, setSelectedResellerId] = useState<string>('all');
+   const hasAutoShownAnnouncement = useRef(false);
 
    // 🔥 FORÇA RESET PARA 20 AO CARREGAR
    useEffect(() => {
@@ -480,6 +481,26 @@ const App: React.FC = () => {
       init();
    }, [currentUser, refreshData]);
 
+   // 🔥 AUTO-ANNOUNCEMENT: Exibe aviso ao carregar o app se o usuário já estiver logado
+   useEffect(() => {
+      if (!isAppLoading && currentUser && settings?.popup?.enabled && !hasAutoShownAnnouncement.current) {
+         const audience = settings.popup.targetAudience || 'all';
+         const userRole = currentUser.role;
+         const shouldShow = audience === 'all'
+            || (audience === 'admin' && userRole === Role.ADMIN)
+            || (audience === 'resellers' && userRole === Role.RESELLER)
+            || (audience === 'members' && userRole === Role.MEMBER)
+            || (audience === 'admin_members' && userRole === Role.MEMBER && (!currentUser.ownerId || currentUser.ownerId === 'ADMIN'))
+            || (audience === 'reseller_members' && userRole === Role.MEMBER && currentUser.ownerId && currentUser.ownerId !== 'ADMIN');
+
+         if (shouldShow) {
+            hasAutoShownAnnouncement.current = true;
+            const timer = setTimeout(() => setShowAnnouncement(true), 1500);
+            return () => clearTimeout(timer);
+         }
+      }
+   }, [isAppLoading, currentUser, settings]);
+
    // PERSISTÊNCIA DE SESSÃO NO LOCALSTORAGE (Evita deslogue ao salvar código)
    useEffect(() => {
       if (currentUser) {
@@ -559,6 +580,7 @@ const App: React.FC = () => {
          setUsers(users.map(u => u.id === currentUser.id ? updated : u));
       }
       setCurrentUser(null); setRunningProfiles([]); setActiveProfileId(null);
+      hasAutoShownAnnouncement.current = false;
    };
 
    const handleLaunchProfile = async (profile: Profile) => {

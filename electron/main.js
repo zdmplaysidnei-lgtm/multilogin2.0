@@ -617,19 +617,29 @@ async function injectProtection(targetPage) {
                         let failCount = 0;
                         for (const cookie of sessionData.a) {
                             try {
+                                const isHostCookie = (cookie.name || '').startsWith('__Host-');
                                 const cookieUrl = getCookieUrl(cookie);
                                 const cookieParams = {
                                     name: cookie.name,
                                     value: cookie.value,
-                                    domain: cookie.domain,
-                                    path: cookie.path || '/',
+                                    path: isHostCookie ? '/' : (cookie.path || '/'),
                                     url: cookieUrl, // 🔑 CRITICAL: CDP precisa da URL para associar o cookie
                                 };
+                                
+                                if (!isHostCookie && cookie.domain) {
+                                    cookieParams.domain = cookie.domain;
+                                }
+
                                 if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
-                                if (cookie.secure) cookieParams.secure = true;
+                                if (cookie.secure || isHostCookie) cookieParams.secure = true;
                                 if (cookie.httpOnly) cookieParams.httpOnly = true;
+                                
                                 const mappedSameSite = mapSameSite(cookie.sameSite);
-                                if (mappedSameSite) cookieParams.sameSite = mappedSameSite;
+                                if (mappedSameSite) {
+                                    cookieParams.sameSite = mappedSameSite;
+                                    if (mappedSameSite === 'None') cookieParams.secure = true;
+                                }
+                                
                                 const result = await client.send('Network.setCookie', cookieParams);
                                 if (result.success !== false) successCount++;
                                 else failCount++;
@@ -768,19 +778,29 @@ async function injectProtection(targetPage) {
                                     console.log('[COOKIES] Injetando ' + sessionData.a.length + ' cookies via CDP...');
                                     for (const cookie of sessionData.a) {
                                         try {
+                                            const isHostCookie = (cookie.name || '').startsWith('__Host-');
                                             const cookieUrl = getCookieUrl2(cookie);
                                             const cookieParams = {
                                                 name: cookie.name,
                                                 value: cookie.value,
-                                                domain: cookie.domain,
-                                                path: cookie.path || '/',
+                                                path: isHostCookie ? '/' : (cookie.path || '/'),
                                                 url: cookieUrl,
                                             };
+                                            
+                                            if (!isHostCookie && cookie.domain) {
+                                                cookieParams.domain = cookie.domain;
+                                            }
+
                                             if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
-                                            if (cookie.secure) cookieParams.secure = true;
+                                            if (cookie.secure || isHostCookie) cookieParams.secure = true;
                                             if (cookie.httpOnly) cookieParams.httpOnly = true;
+                                            
                                             const mapped = mapSameSite2(cookie.sameSite);
-                                            if (mapped) cookieParams.sameSite = mapped;
+                                            if (mapped) {
+                                                cookieParams.sameSite = mapped;
+                                                if (mapped === 'None') cookieParams.secure = true;
+                                            }
+                                            
                                             await client.send('Network.setCookie', cookieParams);
                                         } catch (cookieErr) {
                                             console.log('[COOKIES] Erro cookie ' + cookie.name + ': ' + cookieErr.message);
@@ -2270,16 +2290,39 @@ function registerIPCHandlers() {
                         const client = await page.target().createCDPSession();
 
                         // Prepara cookies para CDP
-                        const cdpCookies = cookiesToInject.map(c => ({
-                            name: c.name,
-                            value: c.value,
-                            domain: c.domain || new URL(targetUrls[0]).hostname,
-                            path: c.path || '/',
-                            secure: c.secure !== false,
-                            httpOnly: c.httpOnly || false,
-                            sameSite: c.sameSite || 'Lax',
-                            expires: c.expires || c.expirationDate || (Date.now() / 1000 + 31536000) // 1 ano
-                        }));
+                        const cdpCookies = cookiesToInject.map(c => {
+                            const isHostCookie = (c.name || '').startsWith('__Host-');
+                            const domain = c.domain || new URL(targetUrls[0]).hostname;
+                            const protocol = (c.secure || isHostCookie) ? 'https' : 'http';
+                            const cleanDomain = (domain || '').replace(/^\./, '');
+                            const cookieUrl = `${protocol}://${cleanDomain}${c.path || '/'}`;
+
+                            const p = {
+                                name: c.name,
+                                value: c.value,
+                                url: cookieUrl,
+                                path: isHostCookie ? '/' : (c.path || '/'),
+                                secure: c.secure !== false || isHostCookie,
+                                httpOnly: !!c.httpOnly,
+                                expires: c.expires || c.expirationDate || (Date.now() / 1000 + 31536000)
+                            };
+
+                            // Para __Host-, NÃO pode ter domain
+                            if (!isHostCookie) {
+                                p.domain = domain;
+                            }
+
+                            // Mapeia SameSite
+                            const ss = String(c.sameSite || '').toLowerCase();
+                            if (ss === 'no_restriction' || ss === 'none') p.sameSite = 'None';
+                            else if (ss === 'lax') p.sameSite = 'Lax';
+                            else if (ss === 'strict') p.sameSite = 'Strict';
+                            else p.sameSite = 'Lax';
+
+                            if (p.sameSite === 'None') p.secure = true;
+
+                            return p;
+                        });
 
                         // Injeta via CDP
                         await client.send('Network.setCookies', { cookies: cdpCookies });
@@ -3181,12 +3224,30 @@ function registerIPCHandlers() {
         try {
             const list = typeof cookies === 'string' ? JSON.parse(cookies) : cookies;
             for (let c of list) {
-                const domain = c.domain.startsWith('.') ? c.domain.substring(1) : c.domain;
-                await ses.cookies.set({
+                const isHostCookie = (c.name || '').startsWith('__Host-');
+                const rawDomain = c.domain || '';
+                const domain = rawDomain.startsWith('.') ? rawDomain.substring(1) : rawDomain;
+                
+                const cookieParams = {
                     url: `https://${domain}${c.path || '/'}`,
-                    name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
-                    secure: true, httpOnly: !!c.httpOnly
-                }).catch(() => { });
+                    name: c.name,
+                    value: c.value,
+                    path: isHostCookie ? '/' : (c.path || '/'),
+                    secure: true,
+                    httpOnly: !!c.httpOnly
+                };
+                
+                if (!isHostCookie && rawDomain) {
+                    cookieParams.domain = rawDomain;
+                }
+                
+                // SameSite mapping para Electron
+                const ss = String(c.sameSite || '').toLowerCase();
+                if (ss === 'no_restriction' || ss === 'none') cookieParams.sameSite = 'no_restriction';
+                else if (ss === 'lax') cookieParams.sameSite = 'lax';
+                else if (ss === 'strict') cookieParams.sameSite = 'strict';
+                
+                await ses.cookies.set(cookieParams).catch(() => { });
             }
             return { status: 'success' };
         } catch (err) { return { status: 'error' }; }
