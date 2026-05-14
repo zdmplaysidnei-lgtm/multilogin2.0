@@ -2132,7 +2132,98 @@ function registerIPCHandlers() {
                 const autoFillEmail = profile.email;
                 const autoFillPass = profile.password;
                 const autoFillFn = (email, pass) => {
-                    // Aguarda a página carregar e tenta preencher
+                    // =====================================================
+                    // 🔑 HEYGEN: Fluxo especial de 2 etapas
+                    // Etapa 1: preenche email → clica "Use password instead"
+                    // Etapa 2: preenche senha
+                    // =====================================================
+                    if (window.location.hostname.includes('heygen.com')) {
+                        if (window.__heygenAutoFillRunning) return;
+                        window.__heygenAutoFillRunning = true;
+
+                        function setNativeValue(el, value) {
+                            const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                            valueSetter.call(el, value);
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                        }
+
+                        function heygenStep1() {
+                            // Verifica se já está na tela de senha (etapa 2)
+                            const passInput = document.querySelector('input[type="password"]');
+                            if (passInput) { heygenStep2(); return; }
+
+                            // Preenche email
+                            const emailInput = document.querySelector('input[type="email"], input[name="email"], input[placeholder*="email" i]');
+                            if (emailInput && emailInput.offsetParent !== null) {
+                                if (!emailInput.value) {
+                                    emailInput.focus();
+                                    setNativeValue(emailInput, email);
+                                    console.log('📝 [HEYGEN] Email preenchido!');
+                                }
+                                // Procura e clica em "Use password instead"
+                                setTimeout(() => {
+                                    const allLinks = Array.from(document.querySelectorAll('a, button, span, p'));
+                                    const pwdLink = allLinks.find(el => {
+                                        const t = el.textContent || '';
+                                        return (t.includes('Use password') || t.includes('password instead') || t.includes('Enter password') || t.includes('Sign in with password'));
+                                    });
+                                    if (pwdLink) {
+                                        console.log('📝 [HEYGEN] Clicando em "Use password instead"...');
+                                        pwdLink.click();
+                                        setTimeout(heygenStep2, 1200);
+                                    } else {
+                                        // Não encontrou o link ainda, tenta novamente
+                                        setTimeout(heygenStep1, 600);
+                                    }
+                                }, 400);
+                            } else {
+                                // Campo de email ainda não apareceu
+                                setTimeout(heygenStep1, 600);
+                            }
+                        }
+
+                        function heygenStep2() {
+                            // Verifica se o campo de email está preenchido corretamente
+                            const emailInput = document.querySelector('input[type="email"], input[name="email"], input[placeholder*="email" i]');
+                            if (emailInput && !emailInput.value) {
+                                emailInput.focus();
+                                setNativeValue(emailInput, email);
+                            }
+                            // Preenche a senha
+                            const passInput = document.querySelector('input[type="password"]');
+                            if (passInput) {
+                                if (!passInput.value) {
+                                    passInput.focus();
+                                    setNativeValue(passInput, pass);
+                                    console.log('📝 [HEYGEN] Senha preenchida!');
+                                }
+                            } else {
+                                setTimeout(heygenStep2, 600);
+                            }
+                        }
+
+                        // Inicia o fluxo com delay para a página carregar
+                        setTimeout(heygenStep1, 800);
+
+                        // Observer para reconectar o fluxo se a página mudar (SPA)
+                        const heygenObserver = new MutationObserver(() => {
+                            const passInput = document.querySelector('input[type="password"]');
+                            if (passInput && !passInput.value) {
+                                heygenStep2();
+                            }
+                        });
+                        setTimeout(() => {
+                            heygenObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                        }, 300);
+                        setTimeout(() => heygenObserver.disconnect(), 30000);
+                        return;
+                    }
+
+                    // =====================================================
+                    // FLUXO GENÉRICO (todos os outros sites)
+                    // =====================================================
                     function tryAutoFill() {
                         // Procura campo de email
                         const emailSelectors = [
