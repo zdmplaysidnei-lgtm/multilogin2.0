@@ -1,174 +1,99 @@
-name: Build Electron App
+name: Build - Mac, Windows e Linux
 
 on:
   push:
-    branches: [main, master]
-    tags:
-      - 'v*'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Permite rodar manualmente pelo painel do GitHub
 
 jobs:
-  # ─────────────────────────────────────────────
-  # WINDOWS
-  # ─────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: 📥 Checkout
+      - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: 📦 Install dependencies
+      - name: Instalar dependências
         run: npm ci
+
+      - name: Build Windows (.exe)
+        run: npm run dist:win
         env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔨 Build Vite
-        run: npm run build
-
-      - name: 🏗️ Build Windows (x64)
-        run: npx electron-builder --win --x64 -p never
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
-
-      - name: 📤 Upload Windows artifact
+      - name: Upload artefato Windows
         uses: actions/upload-artifact@v4
         with:
-          name: windows-x64
-          path: |
-            release/*.exe
-            release/latest.yml
-          if-no-files-found: warn
-          retention-days: 7
+          name: release-windows
+          path: release/*.exe
+          retention-days: 30
 
-  # ─────────────────────────────────────────────
-  # MACOS (Intel x64 + Apple Silicon arm64)
-  # ─────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x64, arm64]
     steps:
-      - name: 📥 Checkout
+      - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: 📦 Install dependencies
+      - name: Instalar dependências
         run: npm ci
+
+      - name: Build macOS (.dmg)
+        run: npm run dist:mac
         env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔨 Build Vite
-        run: npm run build
-
-      - name: 🏗️ Build macOS (${{ matrix.arch }})
-        run: npx electron-builder --mac --${{ matrix.arch }} -p never
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
-          # Desabilita notarização (sem certificado Apple)
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: 📤 Upload macOS artifact
+      - name: Upload artefato macOS
         uses: actions/upload-artifact@v4
         with:
-          name: mac-${{ matrix.arch }}
+          name: release-macos
           path: |
             release/*.dmg
             release/*.zip
-            release/latest-mac.yml
-          if-no-files-found: warn
-          retention-days: 7
+          retention-days: 30
 
-  # ─────────────────────────────────────────────
-  # LINUX
-  # ─────────────────────────────────────────────
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Checkout
+      - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: 📦 Install Linux dependencies (AppImage)
+      - name: Instalar dependências Linux
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y libarchive-tools fakeroot rpm
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot dpkg
 
-      - name: 📦 Install Node dependencies
+      - name: Instalar dependências Node
         run: npm ci
+
+      - name: Build Linux (.AppImage e .deb)
+        run: npm run dist:linux
         env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔨 Build Vite
-        run: npm run build
-
-      - name: 🏗️ Build Linux (x64)
-        run: npx electron-builder --linux --x64 -p never
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
-
-      - name: 📤 Upload Linux artifact
+      - name: Upload artefato Linux
         uses: actions/upload-artifact@v4
         with:
-          name: linux-x64
+          name: release-linux
           path: |
             release/*.AppImage
             release/*.deb
-            release/latest-linux.yml
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ─────────────────────────────────────────────
-  # RELEASE (apenas ao criar tag v*)
-  # ─────────────────────────────────────────────
-  release:
-    needs: [build-windows, build-mac, build-linux]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: 📥 Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: 📋 List artifacts
-        run: find artifacts -type f | sort
-
-      - name: 🚀 Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          retention-days: 30

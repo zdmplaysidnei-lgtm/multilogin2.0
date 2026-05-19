@@ -1062,7 +1062,30 @@ const App: React.FC = () => {
                            key={p.id}
                            profile={{ ...p, isFavorite: currentUser?.favorites?.includes(p.id) || false }}
                            onOpen={handleLaunchProfile}
-                           onEdit={isAdmin ? (prof => { setEditingProfile(prof); setModalSelectedCategories(prof.categories || []); setShowProfileModal(true); }) : undefined}
+                           onEdit={isAdmin ? (prof => {
+                              setEditingProfile(prof);
+                              setModalSelectedCategories(prof.categories || []);
+                              // 🔥 PRÉ-POPULA o campo de proxy se já existir um proxy salvo
+                              if (prof.proxy) {
+                                 // Detecta protocolo
+                                 const protoMatch = prof.proxy.match(/^(https?|socks5?):\/\//i);
+                                 const proto = protoMatch ? protoMatch[1].toLowerCase() : 'http';
+                                 setProxyProtocol(proto);
+                                 // Converte de protocol://USER:PASS@IP:PORT para IP:PORT:USER:PASS
+                                 const withoutProto = prof.proxy.replace(/^(https?|socks5?):\/\//i, '');
+                                 const authMatch = withoutProto.match(/^([^:]+):([^@]+)@(.+)$/);
+                                 if (authMatch) {
+                                    const [, user, pass, hostPort] = authMatch;
+                                    const [ip, port] = hostPort.split(':');
+                                    setProxyInput(`${ip}:${port}:${user}:${pass}`);
+                                 } else {
+                                    setProxyInput(withoutProto);
+                                 }
+                              } else {
+                                 setProxyInput('');
+                              }
+                              setShowProfileModal(true);
+                           }) : undefined}
                            onDelete={isAdmin ? (prof => handleDeleteProfile(prof.id)) : undefined}
                            onSyncSession={isAdmin ? handleCaptureNativeSession : undefined}
                            onToggleFavorite={prof => { const favs = currentUser?.favorites?.includes(prof.id) ? currentUser.favorites.filter(id => id !== prof.id) : [...(currentUser?.favorites || []), prof.id]; const up = { ...currentUser!, favorites: favs }; setCurrentUser(up); DataService.updateSingleUser(up); }}
@@ -1535,9 +1558,13 @@ const App: React.FC = () => {
                      <textarea name="urls" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm h-32 outline-none focus:border-purple-500 font-mono" defaultValue={editingProfile?.urls?.join('\n') || ''} required />
                      <Input name="orderIndex" label="Índice de Ordem" type="number" defaultValue={editingProfile?.orderIndex} />
                      <Input name="videoTutorial" label="Link de Instruções (Tutorial)" defaultValue={editingProfile?.videoTutorial} />
-                     <div className="flex gap-3">
-                        <select value={proxyProtocol} onChange={e => setProxyProtocol(e.target.value)} className="bg-[#111] border border-gray-800 rounded-xl px-4 text-xs w-24 outline-none"><option value="http">HTTP</option><option value="socks5">S5</option></select>
-                        <input className="flex-1 bg-[#111] border border-gray-800 rounded-xl px-4 text-sm outline-none" placeholder="IP:PORTA:USER:PASS" value={proxyInput} onChange={e => setProxyInput(e.target.value)} />
+                     <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-orange-500 flex items-center gap-2">🌐 Proxy do Perfil {editingProfile?.proxy && <span className="text-green-400 font-mono text-[9px] normal-case bg-green-900/20 px-2 py-0.5 rounded-full border border-green-500/30">✅ Salvo: {editingProfile.proxy.replace(/:[^:@]+@/, ':****@')}</span>}</label>
+                        <div className="flex gap-3">
+                           <select value={proxyProtocol} onChange={e => setProxyProtocol(e.target.value)} className="bg-[#111] border border-orange-500/30 rounded-xl px-4 text-xs w-24 outline-none"><option value="http">HTTP</option><option value="socks5">S5</option></select>
+                           <input className="flex-1 bg-[#111] border border-orange-500/30 rounded-xl px-4 text-sm outline-none focus:border-orange-500" placeholder="IP:PORTA:USER:PASS" value={proxyInput} onChange={e => setProxyInput(e.target.value)} />
+                        </div>
+                        <p className="text-[9px] text-gray-600 font-bold">⚠️ Cole aqui o proxy, NÃO no campo Tutorial acima!</p>
                      </div>
                   </div>
                </div>

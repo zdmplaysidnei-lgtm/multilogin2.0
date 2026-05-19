@@ -1848,7 +1848,9 @@ function registerIPCHandlers() {
                     '--no-first-run',
                     '--no-default-browser-check',
                     '--disable-infobars',
-                    `--app=${cfUrl}`  // 🖼️ Modo App: sem barra de endereço
+                    `--app=${cfUrl}`,  // 🖼️ Modo App: sem barra de endereço
+                    // 🔥 PROXY: Aplica proxy configurado no perfil (se existir)
+                    ...(proxyUrl ? [`--proxy-server=${proxyUrl}`] : [])
                 ];
 
                 const cfProcess = spawn(executablePath, cfArgs, { detached: false, stdio: 'ignore' });
