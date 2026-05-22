@@ -630,7 +630,8 @@ async function injectProtection(targetPage) {
                                     cookieParams.domain = cookie.domain;
                                 }
 
-                                if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
+                                const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+                                cookieParams.expires = oneYearFromNow; // 🔥 Força validade de 1 ano
                                 if (cookie.secure || isHostCookie) cookieParams.secure = true;
                                 if (cookie.httpOnly) cookieParams.httpOnly = true;
                                 
@@ -791,7 +792,8 @@ async function injectProtection(targetPage) {
                                                 cookieParams.domain = cookie.domain;
                                             }
 
-                                            if (cookie.expirationDate) cookieParams.expires = cookie.expirationDate;
+                                            const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+                                            cookieParams.expires = oneYearFromNow; // 🔥 Força validade de 1 ano
                                             if (cookie.secure || isHostCookie) cookieParams.secure = true;
                                             if (cookie.httpOnly) cookieParams.httpOnly = true;
                                             
@@ -3321,13 +3323,15 @@ function registerIPCHandlers() {
                 const rawDomain = c.domain || '';
                 const domain = rawDomain.startsWith('.') ? rawDomain.substring(1) : rawDomain;
                 
+                const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
                 const cookieParams = {
                     url: `https://${domain}${c.path || '/'}`,
                     name: c.name,
                     value: c.value,
                     path: isHostCookie ? '/' : (c.path || '/'),
                     secure: true,
-                    httpOnly: !!c.httpOnly
+                    httpOnly: !!c.httpOnly,
+                    expirationDate: oneYearFromNow // 🔥 Força validade de 1 ano no Electron
                 };
                 
                 if (!isHostCookie && rawDomain) {
@@ -3491,16 +3495,13 @@ function registerIPCHandlers() {
                         const client = await page.target().createCDPSession();
                         await client.send('Network.clearBrowserCookies');
 
+                        const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
                         const cleanCookies = sessionData.cookies.map(cookie => {
                             const clean = { ...cookie };
                             delete clean.session;
                             delete clean.storeId;
                             delete clean.hostOnly;
-                            if (clean.expires && typeof clean.expires === 'number' && clean.expires > 0) {
-                                clean.expires = clean.expires;
-                            } else {
-                                delete clean.expires;
-                            }
+                            clean.expires = oneYearFromNow; // 🔥 Força validade de 1 ano
                             return clean;
                         });
 

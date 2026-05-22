@@ -929,8 +929,9 @@ const App: React.FC = () => {
                      <span className="text-sm text-gray-400">Lembrar meus dados</span>
                   </div>
                   <Button className="w-full py-4 text-lg font-bold" type="submit" disabled={isSaving}>ENTRAR NO PAINEL</Button>
-                  <p className="text-[10px] text-gray-500 text-center mt-4 uppercase font-bold tracking-widest">
-                     💖 Desenvolvido por Sidnei - Ferramentas Ilimitadas
+                  <p className="text-[10px] text-gray-500 text-center mt-4 uppercase font-bold tracking-widest flex flex-col gap-1">
+                     <span>💖 Desenvolvido por Sidnei - Ferramentas Ilimitadas</span>
+                     <span className="text-purple-500/50">VERSÃO 3.0</span>
                   </p>
                </form>
             </div>
@@ -951,6 +952,7 @@ const App: React.FC = () => {
                      <div className={`text-[9px] font-black uppercase flex items-center gap-2 ${vpsStatus.connected ? 'text-green-500' : 'text-red-500'}`}>
                         <div className={`w-2 h-2 rounded-full ${vpsStatus.connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 animate-pulse'}`}></div>
                         {vpsStatus.connected ? 'SUPABASE CLOUD ON' : 'OFFLINE MODE'}
+                        <span className="text-purple-500/50 border-l border-white/10 pl-2 ml-1">V3.0</span>
                      </div>
                   </div>
 
