@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   setProxy: (proxy, partition) => ipcRenderer.invoke('set-proxy', { proxy, partition }),
   // Sincronização de sessão via Cloud
   captureSession: (profileId, targetUrl) => ipcRenderer.invoke('capture-session', { profileId, targetUrl }),
+  captureInternalSessionSilent: (profileId, targetUrl) => ipcRenderer.invoke('capture-internal-session-silent', { profileId, targetUrl }),
   injectSession: (profileId, sessionData, targetUrl) => ipcRenderer.invoke('inject-session', { profileId, sessionData, targetUrl }),
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_event, value) => callback(value)),
   platform: process.platform,
@@ -21,4 +22,9 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   installExtension: () => ipcRenderer.invoke('install-extension'),
   removeExtension: (extensionId) => ipcRenderer.invoke('remove-extension', extensionId),
   toggleExtension: (extensionId, enabled) => ipcRenderer.invoke('toggle-extension', extensionId, enabled),
+  // 🔄 Auto-Updater
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
+  downloadAndInstallUpdate: (url) => ipcRenderer.invoke('download-and-install-update', url),
+  onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (_event, data) => callback(data)),
 });

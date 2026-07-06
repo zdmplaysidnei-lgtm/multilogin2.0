@@ -111,4 +111,7 @@ export interface AppSettings {
   customBrowserPath?: string;
   adminEmail?: string;
   adminPassword?: string;
+  latestVersion?: string;       // Versão mínima obrigatória (ex: "3.1")
+  updateDownloadUrl?: string;   // Link do instalador mais recente
+  updateMessage?: string;       // Mensagem customizada na tela de atualização
 }

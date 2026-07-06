@@ -105,8 +105,8 @@ export const DataService = {
     try {
       const { error } = await supabase.from('profiles').delete().eq('id', profileId);
       if (error) return false;
-      const current = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
-      localStorage.setItem('nebula_users_v1', Security.encrypt(current.filter((p: any) => p.id !== profileId)));
+      const current = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(current.filter((p: any) => p.id !== profileId)));
       return true;
     } catch (e) { return false; }
   },

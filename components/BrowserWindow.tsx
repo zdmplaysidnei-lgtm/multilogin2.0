@@ -32,6 +32,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
   const [resizeDir, setResizeDir] = useState<string | null>(null);
   const [autoFillEnabled, setAutoFillEnabled] = useState(profile.autoLoginEnabled ?? true);
   const [download, setDownload] = useState<DownloadStatus | null>(null);
+  const [filterUnlimitedActive, setFilterUnlimitedActive] = useState(false);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
@@ -118,7 +119,18 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       const partition = "persist:" + profile.id;
       const cookieResult = await window.nebulaAPI.getCookies(partition);
       let lsData = "{}";
-      try { lsData = await activeWebview.executeJavaScript("JSON.stringify(window.localStorage)"); } catch (e) { }
+      try { 
+        lsData = await activeWebview.executeJavaScript(`
+          (function() {
+            var data = {};
+            for (var i = 0; i < localStorage.length; i++) {
+              var key = localStorage.key(i);
+              data[key] = localStorage.getItem(key);
+            }
+            return JSON.stringify(data);
+          })()
+        `); 
+      } catch (e) { }
       if (cookieResult?.status === 'success') {
         // Fix: Call onSyncSession if provided to handle cloud sync via App.tsx
         if (onSyncSession) {
@@ -187,7 +199,68 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
     } catch (e) { if (onToast) onToast('Erro no Script', 'error'); }
   };
 
-  // 🔍 FUNÇÕES DE PESQUISA (Ctrl+F)
+  const toggleFilterUnlimited = async () => {
+    const activeWebview = webviewRefs.current[activeTabIndex];
+    if (!activeWebview) return;
+
+    const newState = !filterUnlimitedActive;
+    setFilterUnlimitedActive(newState);
+
+    if (newState) {
+      const filterScript = `
+        (function() {
+          if (window.__filterIlimitado) return;
+          window.__filterIlimitado = true;
+
+          function applyFilter() {
+            // Pega todos os elementos de lista (linhas dos modelos)
+            // Estratégia: procura elementos com largura grande (> 400px) e altura de linha (30-120px)
+            // e verifica se o row contém ou não o texto "ilimitado"
+            const candidates = document.querySelectorAll('*');
+            const checked = new Set();
+
+            candidates.forEach(el => {
+              if (checked.has(el)) return;
+              const rect = el.getBoundingClientRect();
+              // Só processa elementos que parecem ser linhas da lista
+              if (rect.width < 400 || rect.height < 30 || rect.height > 150) return;
+
+              const fullText = (el.textContent || '').toLowerCase();
+
+              // Se não tem "ilimitado" em nenhum lugar do card, esconde
+              if (!fullText.includes('ilimitado') && !fullText.includes('unlimited')) {
+                el.setAttribute('data-nebula-hidden', 'true');
+                el.style.setProperty('display', 'none', 'important');
+                checked.add(el);
+              }
+            });
+          }
+
+          applyFilter();
+          window.__filterInterval = setInterval(applyFilter, 1500);
+          console.log('\u221E Filtro Ilimitado ATIVADO');
+        })();
+      `;
+      await activeWebview.executeJavaScript(filterScript);
+      if (onToast) onToast('\u221E Filtro Ilimitado Ativado!', 'success');
+    } else {
+      // Desativa: mostra tudo de volta
+      const removeFilterScript = `
+        (function() {
+          if (window.__filterInterval) clearInterval(window.__filterInterval);
+          window.__filterIlimitado = false;
+          document.querySelectorAll('[data-nebula-hidden]').forEach(el => {
+            el.removeAttribute('data-nebula-hidden');
+            el.style.removeProperty('display');
+          });
+          console.log('\u221E Filtro Ilimitado DESATIVADO');
+        })();
+      `;
+      await activeWebview.executeJavaScript(removeFilterScript);
+      if (onToast) onToast('Filtro removido', 'info');
+    }
+  };
+
   const handleSearch = (term: string) => {
     const activeWebview = webviewRefs.current[activeTabIndex];
     if (!activeWebview || !term) {
@@ -280,6 +353,34 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
       const handleDomReady = () => {
         if (idx === activeTabIndex) setIsLoading(false);
+
+        // 🔥 INJETAR LOCALSTORAGE DO PERFIL PARA MANTER SESSÃO (EX: HAILUO, MINIMAX)
+        if (profile.localStorage && profile.localStorage.trim().startsWith('{')) {
+           const injectLsScript = `
+             (function() {
+               if (!sessionStorage.getItem('nebula_ls_injected')) {
+                 try {
+                   const lsData = ${profile.localStorage};
+                   // Limpar chaves poluidas formato CDP multi-origin (0,1,2,3)
+                   for (var _i = localStorage.length - 1; _i >= 0; _i--) {
+                     var _k = localStorage.key(_i);
+                     if (_k && /^\d+$/.test(_k)) { try { var _v = JSON.parse(localStorage.getItem(_k)); if (_v && _v.origin && Array.isArray(_v.localStorage)) { localStorage.removeItem(_k); } } catch(_e) {} }
+                   }
+                   let injected = false;
+                   for (const key in lsData) {
+                     if (!localStorage.getItem(key) || localStorage.getItem(key) !== lsData[key]) {
+                       localStorage.setItem(key, lsData[key]);
+                       injected = true;
+                     }
+                   }
+                   sessionStorage.setItem('nebula_ls_injected', 'true');
+                   if (injected) { console.log('[Nebula] LS injetado, recarregando...'); window.location.reload(); }
+                 } catch (e) { console.error('Erro ao injetar LS', e); }
+               }
+             })();
+           `;
+           webview.executeJavaScript(injectLsScript);
+        }
 
         webview.insertCSS(`
           input::-ms-reveal, input::-ms-clear { display: none !important; }
@@ -620,6 +721,19 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         </div>
 
         <div className="flex gap-1">
+          {/* ∞ BOTÃO FILTRAR ILIMITADO */}
+          <button
+            onClick={toggleFilterUnlimited}
+            className={`p-1.5 rounded text-xs font-black transition-all ${
+              filterUnlimitedActive
+                ? 'text-yellow-300 bg-yellow-900/30 ring-1 ring-yellow-500'
+                : 'text-gray-400 hover:text-yellow-300 hover:bg-yellow-900/20'
+            }`}
+            title={filterUnlimitedActive ? 'Remover Filtro (mostra tudo)' : 'Mostrar só Ilimitados'}
+          >
+            ∞
+          </button>
+
           {/* 🔍 BOTÃO DE PESQUISA */}
           <button
             onClick={() => { setShowSearchBar(!showSearchBar); if (!showSearchBar) setTimeout(() => searchInputRef.current?.focus(), 100); }}

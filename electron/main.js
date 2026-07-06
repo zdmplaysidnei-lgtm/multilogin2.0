@@ -22,7 +22,7 @@ if (app && app.commandLine) {
 
 const SYNC_PORT = 19999;
 let mainWindow;
-const GLOBAL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+const GLOBAL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 
 // 🔥 ARMAZENA PROXIES ANÔNIMOS ATIVOS PARA LIMPEZA
@@ -56,6 +56,117 @@ function getExtensionsPath() {
     }
     console.log(`⚠️ [EXTENSÕES] Pasta de extensões não encontrada`);
     return null;
+}
+// 🛡️ GERA EXTENSÃO NATIVA PARA AUTO-FILL E PROTEÇÃO EM MODO EXTERNO
+function generateNebulaShieldExtension(profile, userDataDir) {
+    if (!profile.email && !profile.password && !profile.customCSS && !profile.secureAppMode && !(profile.fingerprint?.secureAppMode)) {
+        return null; // Nada para gerar
+    }
+
+    const extDir = path.join(userDataDir, 'nebula_shield_ext');
+    if (!fs.existsSync(extDir)) {
+        fs.mkdirSync(extDir, { recursive: true });
+    }
+
+    const manifest = {
+        "manifest_version": 3,
+        "name": "Nebula Shield",
+        "version": "1.0",
+        "description": "Auto-fill and Secure App Mode for Nebula Profiles",
+        "permissions": ["storage"],
+        "host_permissions": ["<all_urls>"],
+        "content_scripts": [
+            {
+                "matches": ["<all_urls>"],
+                "js": ["content.js"],
+                "css": ["content.css"],
+                "run_at": "document_end",
+                "all_frames": true
+            }
+        ]
+    };
+
+    let cssContent = profile.customCSS || '';
+    if (profile.secureAppMode || (profile.fingerprint && profile.fingerprint.secureAppMode)) {
+        cssContent += `
+        input::-ms-reveal, input::-ms-clear { display: none !important; }
+        .password-toggle, .show-password, [class*="eye"], [id*="eye"], svg[class*="eye"], [aria-label*="Show pass" i], [aria-label*="Mostrar senh" i] {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+            opacity: 0 !important;
+        }
+        `;
+    }
+
+    const jsContent = `
+        const TARGET_EMAIL = ${JSON.stringify(profile.email || '')};
+        const TARGET_PASS = ${JSON.stringify(profile.password || '')};
+
+        if (TARGET_EMAIL || TARGET_PASS) {
+            function fillInput(input, value) {
+                try {
+                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    nativeSetter.call(input, value);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    return true;
+                } catch(e) { return false; }
+            }
+
+            function tryFillAll() {
+                if (TARGET_EMAIL) {
+                    const emailField = document.querySelector('input[type="email"], input[autocomplete="email"], input[autocomplete="username"]');
+                    if (emailField && emailField.value !== TARGET_EMAIL) {
+                        fillInput(emailField, TARGET_EMAIL);
+                    }
+                }
+                if (TARGET_PASS) {
+                    const passField = document.querySelector('input[type="password"]');
+                    if (passField && passField.value !== TARGET_PASS) {
+                        fillInput(passField, TARGET_PASS);
+                    }
+                }
+            }
+
+            // Loop continuo para SPAs (como Google Login)
+            setInterval(tryFillAll, 800);
+
+            // MutationObserver para detectar quando o campo de senha aparece
+            const observer = new MutationObserver((mutations) => {
+                for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        if (node.nodeType === 1) {
+                            const passField = node.querySelector ? node.querySelector('input[type="password"]') : null;
+                            if (passField || (node.tagName === 'INPUT' && node.type === 'password')) {
+                                setTimeout(tryFillAll, 100);
+                                setTimeout(tryFillAll, 500);
+                                setTimeout(tryFillAll, 1000);
+                            }
+                        }
+                    }
+                }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            // Reagir ao click do botao Next/Avancar para preencher senha apos transicao
+            document.addEventListener('click', (e) => {
+                const btn = e.target && (e.target.tagName === 'BUTTON' ? e.target : e.target.closest('button'));
+                if (btn) {
+                    setTimeout(tryFillAll, 300);
+                    setTimeout(tryFillAll, 800);
+                    setTimeout(tryFillAll, 1500);
+                    setTimeout(tryFillAll, 2500);
+                }
+            }, true);
+        }
+    `;
+
+    fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(path.join(extDir, 'content.css'), cssContent);
+    fs.writeFileSync(path.join(extDir, 'content.js'), jsContent);
+
+    return extDir;
 }
 
 // 🔌 FUNÇÃO PARA LISTAR TODAS AS EXTENSÕES A SEREM CARREGADAS
@@ -578,18 +689,23 @@ async function injectProtection(targetPage) {
                     }
                     console.log(`🍪 [COOKIES] URL de destino: ${finalUrl}`);
 
-                    // 2. Navega para a URL de destino ANTES de injetar cookies
-                    // Isso garante que o domínio esteja correto para localStorage
-                    console.log(`🍪 [COOKIES] Navegando para domínio de destino primeiro...`);
-                    await targetPage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    // 2. Navega para about:blank para injetar cookies ANTES do site carregar
+                    // Isso previne que o site apague dados locais ao carregar sem sessão
+                    console.log(`🍪 [COOKIES] Preparando ambiente...`);
+                    await targetPage.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
                     // 3. Cria sessão CDP para setar cookies
                     const client = await targetPage.target().createCDPSession();
 
-                    // Helper: determina a URL base para o cookie (necessário para Network.setCookie)
-                    const getCookieUrl = (cookie) => {
-                        const protocol = cookie.secure ? 'https' : 'http';
-                        const domain = (cookie.domain || '').replace(/^\./, '');
+                    // Helper: determina a URL base para o cookie (necessário para Network.setCookies no CDP)
+                    const getCookieUrl = (cookie, finalUrl) => {
+                        let protocol = 'https';
+                        try { protocol = new URL(finalUrl).protocol.replace(':', ''); } catch(e) {}
+                        
+                        let domain = cookie.domain || new URL(finalUrl).hostname;
+                        if (domain.startsWith('.')) {
+                            domain = domain.substring(1);
+                        }
                         return `${protocol}://${domain}${cookie.path || '/'}`;
                     };
 
@@ -607,84 +723,94 @@ async function injectProtection(targetPage) {
                     if (sessionData.a && Array.isArray(sessionData.a)) {
                         // Limpa cookies existentes do domínio para evitar conflitos
                         try {
-                            const urlObj = new URL(finalUrl);
                             await client.send('Network.clearBrowserCookies');
                             console.log('🍪 [COOKIES] Cookies do browser limpos antes da injeção');
                         } catch (e) { }
 
-                        console.log(`🍪 [COOKIES] Injetando ${sessionData.a.length} cookies...`);
-                        let successCount = 0;
-                        let failCount = 0;
-                        for (const cookie of sessionData.a) {
-                            try {
-                                const isHostCookie = (cookie.name || '').startsWith('__Host-');
-                                const cookieUrl = getCookieUrl(cookie);
-                                const cookieParams = {
-                                    name: cookie.name,
-                                    value: cookie.value,
-                                    path: isHostCookie ? '/' : (cookie.path || '/'),
-                                    url: cookieUrl, // 🔑 CRITICAL: CDP precisa da URL para associar o cookie
-                                };
-                                
-                                if (!isHostCookie && cookie.domain) {
+                        console.log(`🍪 [COOKIES] Preparando ${sessionData.a.length} cookies para injeção em lote...`);
+                        const cdpCookies = sessionData.a.map(cookie => {
+                            const isHostCookie = (cookie.name || '').startsWith('__Host-');
+                            const cookieUrl = getCookieUrl(cookie, finalUrl);
+                            const cookieParams = {
+                                name: cookie.name,
+                                value: cookie.value,
+                                path: isHostCookie ? '/' : (cookie.path || '/'),
+                                url: cookieUrl, // 🔑 CRITICAL: CDP precisa da URL para associar o cookie
+                            };
+                            
+                            if (!isHostCookie && cookie.domain) {
+                                // 🔑 CRITICAL: No CDP, se vc passar 'domain', ele vira um "Domain Cookie" (com ponto).
+                                // Se o cookie original não tem ponto no início, é um "Host-Only Cookie".
+                                // Para setar um Host-Only cookie via CDP, você DEVE omitir a propriedade 'domain' e passar apenas a 'url'!
+                                if (cookie.domain.startsWith('.')) {
                                     cookieParams.domain = cookie.domain;
                                 }
-
-                                const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
-                                cookieParams.expires = oneYearFromNow; // 🔥 Força validade de 1 ano
-                                if (cookie.secure || isHostCookie) cookieParams.secure = true;
-                                if (cookie.httpOnly) cookieParams.httpOnly = true;
-                                
-                                const mappedSameSite = mapSameSite(cookie.sameSite);
-                                if (mappedSameSite) {
-                                    cookieParams.sameSite = mappedSameSite;
-                                    if (mappedSameSite === 'None') cookieParams.secure = true;
-                                }
-                                
-                                const result = await client.send('Network.setCookie', cookieParams);
-                                if (result.success !== false) successCount++;
-                                else failCount++;
-                            } catch (cookieErr) {
-                                failCount++;
-                                console.log(`⚠️ [COOKIES] Erro ao setar cookie ${cookie.name}:`, cookieErr.message);
                             }
+
+                            const oneYearFromNow = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+                            cookieParams.expires = oneYearFromNow; // 🔥 Força validade de 1 ano
+                            if (cookie.secure || isHostCookie) cookieParams.secure = true;
+                            if (cookie.httpOnly) cookieParams.httpOnly = true;
+                            
+                            const mappedSameSite = mapSameSite(cookie.sameSite);
+                            if (mappedSameSite) {
+                                cookieParams.sameSite = mappedSameSite;
+                                if (mappedSameSite === 'None') cookieParams.secure = true;
+                            }
+                            return cookieParams;
+                        });
+
+                        try {
+                            await client.send('Network.setCookies', { cookies: cdpCookies });
+                            console.log(`✅ [COOKIES] ${cdpCookies.length} cookies injetados via CDP em lote com sucesso!`);
+                        } catch (cookieErr) {
+                            console.log(`⚠️ [COOKIES] Erro ao injetar cookies em lote:`, cookieErr.message);
                         }
-                        console.log(`🍪 [COOKIES] Resultado: ${successCount} OK, ${failCount} falhas de ${sessionData.a.length} total`);
                     }
 
-                    // 5. Injeta localStorage se existir campo 'ls'
-                    if (sessionData.ls && typeof sessionData.ls === 'object') {
-                        console.log('📦 [LOCALSTORAGE] Injetando localStorage...');
-                        const lsEntries = Object.entries(sessionData.ls);
-                        for (const [key, value] of lsEntries) {
-                            try {
-                                await targetPage.evaluate((k, v) => {
-                                    try { localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) { }
-                                }, key, value);
-                            } catch (e) { }
-                        }
-                        console.log(`📦 [LOCALSTORAGE] ${lsEntries.length} itens injetados`);
-                    }
+                    // 5. Injeta localStorage e sessionStorage via evaluateOnNewDocument (ANTES da página carregar)
+                    // Isso garante que frameworks como React/Vue já veem o token na inicialização
+                    const lsData = (sessionData.ls && typeof sessionData.ls === 'object') ? sessionData.ls : {};
+                    const ssData = (sessionData.ss && typeof sessionData.ss === 'object') ? sessionData.ss : {};
 
-                    // 6. Injeta sessionStorage se existir campo 'ss'
-                    if (sessionData.ss && typeof sessionData.ss === 'object') {
-                        console.log('📦 [SESSIONSTORAGE] Injetando sessionStorage...');
-                        const ssEntries = Object.entries(sessionData.ss);
-                        for (const [key, value] of ssEntries) {
-                            try {
-                                await targetPage.evaluate((k, v) => {
-                                    try { sessionStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)); } catch (e) { }
-                                }, key, value);
-                            } catch (e) { }
+                    const lsEntries = Object.entries(lsData);
+                    const ssEntries = Object.entries(ssData);
+
+                    if (lsEntries.length > 0 || ssEntries.length > 0) {
+                        console.log(`📦 [STORAGE] Preparando injeção antecipada: ${lsEntries.length} ls, ${ssEntries.length} ss`);
+                        
+                        const preloadScript = `
+                            (function() {
+                                try {
+                                    var ls = ${JSON.stringify(lsData)};
+                                    var ss = ${JSON.stringify(ssData)};
+                                    for (var k in ls) {
+                                        try { localStorage.setItem(k, typeof ls[k] === 'string' ? ls[k] : JSON.stringify(ls[k])); } catch(e) {}
+                                    }
+                                    for (var k in ss) {
+                                        try { sessionStorage.setItem(k, typeof ss[k] === 'string' ? ss[k] : JSON.stringify(ss[k])); } catch(e) {}
+                                    }
+                                    console.log('[RTZ] Storage injetado antes da inicialização do app!');
+                                } catch(e) {
+                                    console.error('[RTZ] Erro ao injetar storage:', e);
+                                }
+                            })();
+                        `;
+
+                        try {
+                            await client.send('Page.addScriptToEvaluateOnNewDocument', { source: preloadScript });
+                            console.log(`📦 [STORAGE] Script de pré-injeção registrado via CDP (evaluateOnNewDocument)`);
+                        } catch (e) {
+                            console.log(`⚠️ [STORAGE] Erro ao registrar evaluateOnNewDocument:`, e.message);
                         }
                     }
 
                     await client.detach();
 
-                    // 7. RECARREGA a página para que o servidor veja os cookies autenticados
-                    console.log(`🔄 [RELOAD] Recarregando ${finalUrl} com cookies injetados...`);
-                    await targetPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-                    console.log('✅ [COOKIES] Sessão injetada e página recarregada com sucesso!');
+                    // 6. NAVEGA PARA A URL DE DESTINO — storage já estará disponível na inicialização do app
+                    console.log(`🚀 [NAVEGAÇÃO] Navegando para ${finalUrl} com cookies e storage pré-injetados...`);
+                    await targetPage.goto(finalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    console.log('✅ [SESSÃO] Sessão injetada com sucesso!');
 
                 } catch (err) {
                     console.error('❌ [COOKIES] Erro ao processar sessão:', err.message);
@@ -1038,6 +1164,212 @@ async function attachCDPDownloadListener(browser) {
 }
 
 function registerIPCHandlers() {
+
+    // ========== 🔄 AUTO-UPDATER: VERSÃO DO APP + ABRIR URL EXTERNA ==========
+    ipcMain.handle('get-app-version', () => {
+        return app.getVersion(); // Retorna a versão do package.json
+    });
+
+    ipcMain.handle('open-external-url', async (event, url) => {
+        if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+            await shell.openExternal(url);
+            return { success: true };
+        }
+        return { success: false, error: 'URL inválida' };
+    });
+
+    // ========== 🔄 DOWNLOAD AUTOMÁTICO + INSTALAÇÃO DO UPDATER ==========
+    ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
+        const https = require('https');
+        const http = require('http');
+        const os = require('os');
+
+        const sendProgress = (data) => {
+            try { mainWindow?.webContents.send('update-download-progress', data); } catch (e) {}
+        };
+
+        // Resolve redirecionamentos (Google Drive, Mega, etc.)
+        const resolveRedirects = (url, maxRedirects = 10) => {
+            return new Promise((resolve, reject) => {
+                if (maxRedirects <= 0) { resolve(url); return; }
+                const lib = url.startsWith('https') ? https : http;
+                const req = lib.request(url, { method: 'HEAD' }, (res) => {
+                    if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+                        const nextUrl = res.headers.location.startsWith('http')
+                            ? res.headers.location
+                            : new URL(res.headers.location, url).toString();
+                        resolve(resolveRedirects(nextUrl, maxRedirects - 1));
+                    } else {
+                        resolve(url);
+                    }
+                });
+                req.on('error', () => resolve(url));
+                req.end();
+            });
+        };
+
+        try {
+            sendProgress({ phase: 'resolving', percent: 0, message: 'Preparando download...' });
+
+            // Detecta extensão e nome do arquivo
+            const ext = process.platform === 'darwin' ? '.dmg' : process.platform === 'linux' ? '.AppImage' : '.exe';
+            const tmpDir = app.getPath('temp');
+            const installerPath = path.join(tmpDir, `multilogin-update${ext}`);
+
+            // Remove arquivo antigo se existir
+            if (fs.existsSync(installerPath)) {
+                try { fs.unlinkSync(installerPath); } catch (e) {}
+            }
+
+            // Resolve possíveis redirecionamentos
+            const finalUrl = await resolveRedirects(downloadUrl);
+            // Bypass nativo para Google Drive (converte URL de view para download direto e resolve aviso de antivírus)
+            const getGoogleDriveDirectLink = (url) => {
+                return new Promise((resolve) => {
+                    const idMatch = url.match(/id=([^&]+)/) || url.match(/\/d\/([^\/]+)/);
+                    if (!idMatch) return resolve({ url });
+                    const fileId = idMatch[1];
+                    const api = `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
+                    
+                    https.get(api, (res) => {
+                        let data = '';
+                        const cookies = res.headers['set-cookie'];
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => {
+                            const confirmMatch = data.match(/name="confirm" value="([^"]+)"/);
+                            const uuidMatch = data.match(/name="uuid" value="([^"]+)"/);
+                            if (confirmMatch) {
+                                let directUrl = `${api}&confirm=${confirmMatch[1]}`;
+                                if (uuidMatch) directUrl += `&uuid=${uuidMatch[1]}`;
+                                resolve({ url: directUrl, cookies });
+                            } else {
+                                resolve({ url: api, cookies });
+                            }
+                        });
+                        res.on('error', () => resolve({ url: api }));
+                    });
+                });
+            };
+
+            const gDriveResult = await getGoogleDriveDirectLink(finalUrl);
+            const downloadTargetUrl = gDriveResult.url;
+            const downloadCookies = gDriveResult.cookies ? gDriveResult.cookies.join('; ') : '';
+
+            console.log(`🔄 [UPDATER] Baixando de: ${downloadTargetUrl}`);
+
+            sendProgress({ phase: 'downloading', percent: 0, message: 'Iniciando download...' });
+
+            // Função de download com suporte a redirecionamentos durante o GET
+            const downloadFile = (url, filePath, redirectCount = 0, cookieStr = '') => {
+                return new Promise((resolve, reject) => {
+                    if (redirectCount > 10) { reject(new Error('Muitos redirecionamentos')); return; }
+                    const lib = url.startsWith('https') ? https : http;
+                    const file = fs.createWriteStream(filePath);
+
+                    const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+                    if (cookieStr) headers['Cookie'] = cookieStr;
+
+                    const req = lib.get(url, { headers }, (res) => {
+                        // Segue redirecionamentos
+                        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+                            file.destroy();
+                            fs.unlink(filePath, () => {});
+                            const nextUrl = res.headers.location.startsWith('http')
+                                ? res.headers.location
+                                : new URL(res.headers.location, url).toString();
+                            console.log(`🔄 [UPDATER] Redirecionando para: ${nextUrl}`);
+                            downloadFile(nextUrl, filePath, redirectCount + 1, cookieStr).then(resolve).catch(reject);
+                            return;
+                        }
+
+                        if (res.statusCode !== 200) {
+                            file.destroy();
+                            reject(new Error(`HTTP ${res.statusCode}`));
+                            return;
+                        }
+
+                        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+                        let downloadedBytes = 0;
+                        let lastPercent = -1;
+
+                        res.on('data', (chunk) => {
+                            downloadedBytes += chunk.length;
+                            const percent = totalBytes > 0
+                                ? Math.floor((downloadedBytes / totalBytes) * 100)
+                                : -1;
+
+                            if (percent !== lastPercent) {
+                                lastPercent = percent;
+                                const mb = (downloadedBytes / 1024 / 1024).toFixed(1);
+                                const totalMb = totalBytes > 0 ? (totalBytes / 1024 / 1024).toFixed(1) : '?';
+                                sendProgress({
+                                    phase: 'downloading',
+                                    percent: percent >= 0 ? percent : 50,
+                                    message: `Baixando... ${mb} MB${totalBytes > 0 ? ` / ${totalMb} MB` : ''}`,
+                                    bytesDownloaded: downloadedBytes,
+                                    totalBytes
+                                });
+                            }
+                        });
+
+                        res.pipe(file);
+
+                        file.on('finish', () => {
+                            file.close();
+                        });
+
+                        file.on('close', () => {
+                            resolve();
+                        });
+
+                        res.on('error', (err) => {
+                            file.destroy();
+                            reject(err);
+                        });
+                    });
+
+                    req.on('error', (err) => {
+                        file.destroy();
+                        reject(err);
+                    });
+                });
+            };
+
+            await downloadFile(downloadTargetUrl, installerPath, 0, downloadCookies);
+
+            console.log(`✅ [UPDATER] Download concluído: ${installerPath}`);
+            sendProgress({ phase: 'installing', percent: 100, message: 'Abrindo instalador...' });
+
+            // Aguarda 1 segundo para a UI mostrar o estado final
+            await new Promise(r => setTimeout(r, 1000));
+
+            // Executa o instalador
+            if (process.platform === 'win32') {
+                // Windows: abre o .exe (NSIS) silenciosamente e reinicia o app automaticamente
+                const { spawn } = require('child_process');
+                spawn(installerPath, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+            } else if (process.platform === 'darwin') {
+                await shell.openPath(installerPath);
+            } else {
+                // Linux: AppImage precisa de permissão de execução
+                fs.chmodSync(installerPath, '755');
+                const { spawn } = require('child_process');
+                spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+            }
+
+            sendProgress({ phase: 'done', percent: 100, message: 'Instalador iniciado! O app irá fechar.' });
+
+            // Fecha o app após 2 segundos para o instalador substituir os arquivos
+            setTimeout(() => { app.quit(); }, 2500);
+
+            return { success: true };
+        } catch (err) {
+            console.error('❌ [UPDATER] Erro:', err.message);
+            sendProgress({ phase: 'error', percent: 0, message: `Erro: ${err.message}` });
+            return { success: false, error: err.message };
+        }
+    });
+
     // ========== MODO NATIVO COM PRÉ-LOGIN SILENCIOSO (DRM + OCULTA SENHA) ==========
     // 1. Puppeteer HEADLESS faz login automático (invisível)
     // 2. Salva cookies no perfil
@@ -1237,7 +1569,7 @@ function registerIPCHandlers() {
                 'heygen.com', 'app.heygen.com',   // HeyGen - OAuth (Google/Apple/SSO/Email)
                 // 🔥 SITES COM PROTEÇÃO ANTI-BOT AVANÇADA (pulam pré-login)
                 'dankicode.com', 'cursos.dankicode.com',  // DankiCode - Anti-bot
-                'geminigen.ai',                            // GeminiGen AI - Cloudflare Turnstile
+                'geminigen.ai', 'adapta.one', 'agent.adapta.one', // CF Turnstile
                 // 🚀 SITES COM EXTENSÃO DEDICADA (a extensão cuida da autenticação)
                 'rocketoolz.com', 'dash.rocketoolz.com',  // Rocketoolz - autenticação via extensão
             ];
@@ -1269,7 +1601,7 @@ function registerIPCHandlers() {
                             '--no-first-run',
                             '--disable-infobars',
                             '--disable-notifications',
-                            `--user-agent=${GLOBAL_UA}`,
+                            // `--user-agent=${GLOBAL_UA}`, // Deixa usar o real do Chrome
                             // 🔥 PROTEÇÕES ANTI-DETECÇÃO
                             '--disable-blink-features=AutomationControlled',
                             '--disable-features=IsolateOrigins,site-per-process',
@@ -1754,6 +2086,72 @@ function registerIPCHandlers() {
 
                 // Aguarda um pouco para garantir que o userDataDir foi liberado
                 await new Promise(r => setTimeout(r, 1000));
+            } else if (profile.cookies && profile.cookies.trim() && !isOAuthOnlySite) {
+                console.log(`🍪 [PRÉ-LOGIN] Perfil não possui senha, mas possui COOKIES! Injetando silenciosamente...`);
+                let headlessBrowser = null;
+                try {
+                    headlessBrowser = await puppeteer.launch({
+                        executablePath,
+                        headless: 'new', // Modo INVISÍVEL
+                        userDataDir,
+                        args: ['--no-first-run', '--disable-infobars', '--disable-notifications']
+                    });
+                    
+                    const page = await headlessBrowser.newPage();
+                    const client = await page.target().createCDPSession();
+                    
+                    // Vai para about:blank para evitar conflitos ao setar cookies
+                    await page.goto('about:blank');
+                    
+                    let cookiesToInject = [];
+                    const cookieStr = profile.cookies.trim();
+
+                    if (cookieStr.startsWith('[')) {
+                        cookiesToInject = JSON.parse(cookieStr);
+                    } else if (cookieStr.startsWith('{')) {
+                        cookiesToInject = [JSON.parse(cookieStr)];
+                    } else {
+                        const lines = cookieStr.split('\n').filter(l => l.trim());
+                        for (const line of lines) {
+                            if (line.includes('\t')) {
+                                const parts = line.split('\t');
+                                if (parts.length >= 7) {
+                                    cookiesToInject.push({ domain: parts[0], path: parts[2], secure: parts[3] === 'TRUE', expires: parseInt(parts[4]) || -1, name: parts[5], value: parts[6] });
+                                }
+                            } else if (line.includes('=')) {
+                                const [name, ...vp] = line.split('=');
+                                if (name && vp.length > 0) cookiesToInject.push({ name: name.trim(), value: vp.join('=').trim(), domain: new URL(targetUrls[0]).hostname });
+                            }
+                        }
+                    }
+
+                    if (cookiesToInject.length > 0) {
+                        const cdpCookies = cookiesToInject.map(c => {
+                            const isHost = (c.name || '').startsWith('__Host-');
+                            let domain = c.domain || new URL(targetUrls[0]).hostname;
+                            const cleanDomain = domain.replace(/^\./, '');
+                            const cookieUrl = `https://${cleanDomain}${c.path || '/'}`;
+                            const p = { name: c.name, value: c.value, url: cookieUrl, path: isHost ? '/' : (c.path || '/'), secure: c.secure !== false || isHost, httpOnly: !!c.httpOnly, expires: c.expires || c.expirationDate || (Date.now() / 1000 + 31536000) };
+                            if (!isHost && domain && domain.startsWith('.')) p.domain = domain;
+                            const ss = String(c.sameSite || '').toLowerCase();
+                            p.sameSite = (ss === 'no_restriction' || ss === 'none') ? 'None' : (ss === 'strict' ? 'Strict' : 'Lax');
+                            if (p.sameSite === 'None') p.secure = true;
+                            return p;
+                        });
+                        
+                        // Limpa cookies antigos para não dar conflito
+                        await client.send('Network.clearBrowserCookies').catch(()=>{});
+                        await client.send('Network.setCookies', { cookies: cdpCookies });
+                        console.log(`✅ [PRÉ-LOGIN] ${cdpCookies.length} cookies injetados diretamente na raiz do Chrome!`);
+                    }
+                    
+                    try { await Promise.race([headlessBrowser.close(), new Promise(r => setTimeout(r, 2000))]); } catch (e) { }
+                } catch (err) {
+                    console.warn(`⚠️ [PRÉ-LOGIN] Erro ao injetar cookies silenciosamente:`, err.message);
+                    try { if (headlessBrowser) await headlessBrowser.close(); } catch (e) { }
+                }
+                
+                await new Promise(r => setTimeout(r, 1000));
             }
 
             // ========== AGORA ABRE O CHROME NATIVO (JÁ LOGADO!) ==========
@@ -1766,7 +2164,7 @@ function registerIPCHandlers() {
                 '--disable-notifications',
                 '--disable-translate',
                 '--autoplay-policy=no-user-gesture-required',
-                `--user-agent=${GLOBAL_UA}`,
+                // `--user-agent=${GLOBAL_UA}`, // Deixa usar o real do Chrome
                 // 🔒 FLAGS DE PROTEÇÃO
                 '--disable-client-side-phishing-detection',
                 '--disable-default-apps',
@@ -1782,14 +2180,21 @@ function registerIPCHandlers() {
                 // '--disable-setuid-sandbox' removido: idem acima
             ];
 
-            // 🧩 CARREGA EXTENSÕES VIA --load-extension (se ativado)
+            // 🔌 CARREGA EXTENSÕES VIA --load-extension (se ativado)
             const shouldLoadExtensions = profile.enableExtensions === true;
             let extensionsList = [];
             if (shouldLoadExtensions) {
                 extensionsList = getExtensionsList();
-                if (extensionsList.length > 0) {
-                    console.log(`🔌 [NATIVO] ${extensionsList.length} extensão(ões) encontrada(s)`);
-                }
+            }
+            
+            // GERA E INJETA EXTENSÃO DE AUTO-FILL/PROTEÇÃO
+            const nebulaExt = generateNebulaShieldExtension(profile, userDataDir);
+            if (nebulaExt) {
+                extensionsList.push(nebulaExt);
+            }
+
+            if (extensionsList.length > 0) {
+                console.log(`🔌 [NATIVO] ${extensionsList.length} extensão(ões) encontrada(s) (CF Bypass)`);
             }
 
             if (proxyUrl) {
@@ -1828,8 +2233,8 @@ function registerIPCHandlers() {
             let browser;
             console.log(`🔍 [DEBUG] shouldLoadExtensions=${shouldLoadExtensions}, extensionsList.length=${extensionsList.length}`);
 
-            // 🛡️ MODO APP SEGURO: Ativado via flag no perfil OU pelo domínio geminigen.ai (retrocompatibilidade)
-            const cloudflareSites = ['geminigen.ai'];
+            // 🛡️ MODO APP SEGURO: Ativado via flag no perfil OU pelo domínio (retrocompatibilidade)
+            const cloudflareSites = ['geminigen.ai', 'adapta.one', 'agent.adapta.one'];
             const isCloudflareProtected = profile.secureAppMode ||
                 cloudflareSites.some(site => (targetUrls[0] || '').toLowerCase().includes(site));
 
@@ -1876,6 +2281,14 @@ function registerIPCHandlers() {
                                 const protectAndFillFn = (em, pw) => {
                                     if (!window.mlProtectionInjected) {
                                         window.mlProtectionInjected = true;
+                                        
+                                        // 🛡️ ANTI-DETECÇÃO CF TURNSTILE NO MODO APP SEGURO
+                                        try {
+                                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                                            delete navigator.__proto__.webdriver;
+                                            window.chrome = window.chrome || { runtime: {} };
+                                        } catch (err) {}
+
                                         // Esconde olho
                                         const s = document.createElement('style');
                                         s.id = 'ml-hide-eye';
@@ -1927,6 +2340,68 @@ function registerIPCHandlers() {
                             try { await mainPage.waitForNavigation({ timeout: 3000, waitUntil: 'networkidle2' }); } catch (_) {}
                             await injectAll(mainPage);
                             console.log(`✅ [CF-PHASE2] Proteção e Auto-fill aplicados na aba principal`);
+
+                            // 🍪 [CF-PHASE2] INJETAR COOKIES DO PERFIL (para perfis que só têm cookies, sem email/senha)
+                            if (profile.cookies && profile.cookies.trim()) {
+                                try {
+                                    console.log(`🍪 [CF-PHASE2] Injetando cookies do perfil via CDP...`);
+                                    let cookiesToInject = [];
+                                    const cookieStr = profile.cookies.trim();
+
+                                    if (cookieStr.startsWith('[')) {
+                                        cookiesToInject = JSON.parse(cookieStr);
+                                    } else if (cookieStr.startsWith('{')) {
+                                        cookiesToInject = [JSON.parse(cookieStr)];
+                                    } else {
+                                        const lines = cookieStr.split('\n').filter(l => l.trim());
+                                        for (const line of lines) {
+                                            if (line.includes('\t')) {
+                                                const parts = line.split('\t');
+                                                if (parts.length >= 7) {
+                                                    cookiesToInject.push({ domain: parts[0], path: parts[2], secure: parts[3] === 'TRUE', expires: parseInt(parts[4]) || -1, name: parts[5], value: parts[6] });
+                                                }
+                                            } else if (line.includes('=')) {
+                                                const [name, ...vp] = line.split('=');
+                                                if (name && vp.length > 0) cookiesToInject.push({ name: name.trim(), value: vp.join('=').trim(), domain: new URL(cfUrl).hostname });
+                                            }
+                                        }
+                                    }
+
+                                    if (cookiesToInject.length > 0) {
+                                        const cfCookieClient = await mainPage.target().createCDPSession();
+                                        const cdpCookies = cookiesToInject.map(c => {
+                                            const isHost = (c.name || '').startsWith('__Host-');
+                                            let domain = c.domain || new URL(cfUrl).hostname;
+                                            const cleanDomain = domain.replace(/^\./, '');
+                                            const cookieUrl = `https://${cleanDomain}${c.path || '/'}`;
+                                            const p = { name: c.name, value: c.value, url: cookieUrl, path: isHost ? '/' : (c.path || '/'), secure: c.secure !== false || isHost, httpOnly: !!c.httpOnly, expires: c.expires || c.expirationDate || (Date.now() / 1000 + 31536000) };
+                                            if (!isHost && domain && domain.startsWith('.')) p.domain = domain;
+                                            const ss = String(c.sameSite || '').toLowerCase();
+                                            p.sameSite = (ss === 'no_restriction' || ss === 'none') ? 'None' : (ss === 'strict' ? 'Strict' : 'Lax');
+                                            if (p.sameSite === 'None') p.secure = true;
+                                            return p;
+                                        });
+                                        await cfCookieClient.send('Network.setCookies', { cookies: cdpCookies });
+                                        console.log(`✅ [CF-PHASE2] ${cdpCookies.length} cookies injetados! Recarregando página...`);
+                                        // Recarrega a página para aplicar os cookies
+                                        await mainPage.reload({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+                                    }
+                                } catch (ckErr) {
+                                    console.warn(`⚠️ [CF-PHASE2] Erro ao injetar cookies:`, ckErr.message);
+                                }
+                            }
+                        }
+
+                        // 🚀 [CF-PHASE2] SCRIPT DE AUTOMAÇÃO (JS)
+                        if (profile.automationScript && profile.automationScript.trim()) {
+                            try {
+                                console.log(`🚀 [CF-PHASE2] Executando script de automação no Modo App Seguro...`);
+                                // Aguarda mais um pouco se a página acabou de ser recarregada pelos cookies
+                                await new Promise(r => setTimeout(r, 2000));
+                                await mainPage.evaluate(profile.automationScript);
+                            } catch (scriptErr) {
+                                console.warn(`⚠️ [CF-PHASE2] Erro no script de automação:`, scriptErr.message);
+                            }
                         }
 
                         // 2. Abre as demais URLs caso o usuário tenha configurado múltiplas
@@ -2387,8 +2862,11 @@ function registerIPCHandlers() {
                         // Prepara cookies para CDP
                         const cdpCookies = cookiesToInject.map(c => {
                             const isHostCookie = (c.name || '').startsWith('__Host-');
-                            const domain = c.domain || new URL(targetUrls[0]).hostname;
-                            const protocol = (c.secure || isHostCookie) ? 'https' : 'http';
+                            let domain = c.domain || new URL(targetUrls[0]).hostname;
+                            
+                            let protocol = 'https';
+                            try { protocol = new URL(targetUrls[0]).protocol.replace(':', ''); } catch(e) {}
+                            
                             const cleanDomain = (domain || '').replace(/^\./, '');
                             const cookieUrl = `${protocol}://${cleanDomain}${c.path || '/'}`;
 
@@ -2402,9 +2880,13 @@ function registerIPCHandlers() {
                                 expires: c.expires || c.expirationDate || (Date.now() / 1000 + 31536000)
                             };
 
-                            // Para __Host-, NÃO pode ter domain
-                            if (!isHostCookie) {
-                                p.domain = domain;
+                            // Para __Host-, NÃO pode ter domain.
+                            // Se o domínio original começar com '.', é Cookie de Domínio, então passamos o domain.
+                            // Se não tiver ponto, é Host-Only, omitimos o domain (usamos apenas a URL para o Chrome setar certo).
+                            if (!isHostCookie && domain) {
+                                if (domain.startsWith('.')) {
+                                    p.domain = domain;
+                                }
                             }
 
                             // Mapeia SameSite
@@ -2752,7 +3234,7 @@ function registerIPCHandlers() {
             const launchArgs = [
                 '--no-first-run',
                 '--no-default-browser-check',
-                `--user-agent=${GLOBAL_UA}`,
+                // `--user-agent=${GLOBAL_UA}`, // Deixa usar o real do Chrome
                 '--disable-infobars',
                 // 🔒 Desabilita COMPLETAMENTE o gerenciador de senhas do Chrome
                 '--disable-save-password-bubble',
@@ -2776,14 +3258,21 @@ function registerIPCHandlers() {
                 proxyUrl ? `--proxy-server=${proxyUrl}` : ''
             ].filter(Boolean);
 
-            // 🧩 CARREGA EXTENSÕES VIA --load-extension (se ativado)
+            // 🔌 CARREGA EXTENSÕES VIA --load-extension (se ativado)
             const shouldLoadExtensions = profile.enableExtensions === true;
             let extensionsList = [];
             if (shouldLoadExtensions) {
                 extensionsList = getExtensionsList();
-                if (extensionsList.length > 0) {
-                    console.log(`🔌 [PUPPETEER] ${extensionsList.length} extensão(ões) encontrada(s)`);
-                }
+            }
+
+            // GERA E INJETA EXTENSÃO DE AUTO-FILL/PROTEÇÃO
+            const nebulaExt = generateNebulaShieldExtension(profile, userDataDir);
+            if (nebulaExt) {
+                extensionsList.push(nebulaExt);
+            }
+
+            if (extensionsList.length > 0) {
+                console.log(`🔌 [PUPPETEER] ${extensionsList.length} extensão(ões) encontrada(s) para carregar`);
             }
 
             // 🧩 Se tem extensões ativas, NÃO usa --app (mostra toolbar com ícones)
@@ -3351,6 +3840,45 @@ function registerIPCHandlers() {
     });
 
     // ========== SINCRONIZAÇÃO DE SESSÃO VIA CLOUD ==========
+
+    // Captura silenciosa para perfis internos (Modo Batch Sync)
+    ipcMain.handle('capture-internal-session-silent', async (event, { profileId, targetUrl }) => {
+        console.log(`☁️ [BATCH SYNC] Capturando silenciosamente: ${profileId}`);
+        try {
+            const partition = "persist:" + profileId;
+            const win = new BrowserWindow({
+                show: false,
+                webPreferences: { partition, nodeIntegration: false, contextIsolation: true }
+            });
+            
+            // Timeout de segurança se a página demorar muito para carregar
+            const loadPromise = win.loadURL(targetUrl);
+            const timeoutPromise = new Promise(r => setTimeout(r, 6000));
+            await Promise.race([loadPromise, timeoutPromise]);
+            
+            // Aguarda renderizar
+            await new Promise(r => setTimeout(r, 2000));
+            
+            const cookies = await session.fromPartition(partition).cookies.get({});
+            
+            const lsDataStr = await win.webContents.executeJavaScript(`
+                (function() {
+                    var data = {};
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var key = localStorage.key(i);
+                        data[key] = localStorage.getItem(key);
+                    }
+                    return JSON.stringify(data);
+                })()
+            `).catch(() => "{}");
+            
+            win.destroy();
+            return { status: 'success', cookies, localStorage: lsDataStr };
+        } catch (e) {
+            console.error('Erro no capture-internal-session-silent:', e);
+            return { status: 'error', message: e.message };
+        }
+    });
 
     // Captura cookies + localStorage do Chrome nativo (para o admin salvar sessão)
     ipcMain.handle('capture-session', async (event, { profileId, targetUrl }) => {

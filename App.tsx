@@ -105,6 +105,8 @@ const App: React.FC = () => {
    // --- SESSIONS ---
    const [runningProfiles, setRunningProfiles] = useState<Profile[]>([]);
    const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+   const [isBatchSyncing, setIsBatchSyncing] = useState(false);
+   const [batchSyncProgress, setBatchSyncProgress] = useState('');
 
    // --- REORDENAÇÃO (DRAG & DROP) ---
    const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
@@ -438,7 +440,7 @@ const App: React.FC = () => {
                          table: 'users' 
                    }, () => {
                          // 🔥 OTIMIZAÇÃO: Apenas admins precisam refetch completo
-                         if (currentUser.role === Role.ADMIN) refreshData();
+                         // // if (currentUser.role === Role.ADMIN) refreshData(); // COMENTADO PARA EVITAR DDOS // COMENTADO PARA EVITAR DDOS
                    })
                    .on('postgres_changes', { 
                          event: 'DELETE', 
@@ -522,7 +524,7 @@ const App: React.FC = () => {
       return () => clearInterval(timer);
    }, []);
 
-   // LOGIN CORRIGIDO PARA USAR UPDATE SINGLE USER (ECONOMIA DE CPU)
+   // LOGIN COM FALLBACK DE CACHE (resolve "email não encontrado" por falha de rede)
    const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault();
       setIsSaving(true);
@@ -534,20 +536,50 @@ const App: React.FC = () => {
          setCurrentUser(master as any); setIsSaving(false); return;
       }
 
-      // 🔥 OTIMIZAÇÃO CRÍTICA: Busca apenas 1 usuário específico
-      const { data: user } = await supabase.from('users').select('*').eq('email', emailInput).single();
+      // 🔥 BUSCA NO SUPABASE COM TRATAMENTO DE ERRO CORRETO
+      const { data: user, error: loginError } = await supabase.from('users').select('*').eq('email', emailInput).single();
 
-      if (user) {
-         if (user.blocked) { setToast({ msg: 'Acesso suspenso.', type: 'error' }); setIsSaving(false); return; }
-         if (user.role !== Role.ADMIN && user.isLoggedIn && user.currentMachineId && user.currentMachineId !== machineId) { setToast({ msg: 'Sessão ativa em outro computador.', type: 'error' }); setIsSaving(false); return; }
+      // 🔥 FALLBACK: Se Supabase falhou (rede instável), tenta encontrar no cache local
+      let finalUser = user;
+      if (!user) {
+         // Código PGRST116 significa que a query retornou 0 resultados (Usuário não existe na nuvem)
+         if (loginError && loginError.code === 'PGRST116') {
+             setToast({ msg: 'E-mail não encontrado no banco de dados.', type: 'error' });
+             setIsSaving(false);
+             return;
+         }
+
+         if (loginError) {
+             console.warn('⚠️ Supabase indisponível no login, tentando cache local:', loginError.message);
+             const cachedUsers: any[] = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
+             const cachedMatch = cachedUsers.find((u: any) => u.email?.toLowerCase().trim() === emailInput);
+             if (cachedMatch) {
+                finalUser = cachedMatch;
+                setToast({ msg: '⚠️ Modo offline: verificando localmente...', type: 'info' });
+             } else {
+                // Realmente erro de rede e não tá no cache
+                setToast({ msg: 'Servidor indisponível. Verifique sua conexão e tente novamente.', type: 'error' });
+                setIsSaving(false);
+                return;
+             }
+         } else {
+             setToast({ msg: 'E-mail não encontrado.', type: 'error' });
+             setIsSaving(false);
+             return;
+         }
+      }
+
+      if (finalUser) {
+         if (finalUser.blocked) { setToast({ msg: 'Acesso suspenso.', type: 'error' }); setIsSaving(false); return; }
+         if (finalUser.role !== Role.ADMIN && finalUser.isLoggedIn && finalUser.currentMachineId && finalUser.currentMachineId !== machineId) { setToast({ msg: 'Sessão ativa em outro computador.', type: 'error' }); setIsSaving(false); return; }
 
          const { data: sRes } = await supabase.from('settings').select('config').single();
-         const freshSettings = sRes?.config || INITIAL_SETTINGS;
-         const isPasswordCorrect = user.role === Role.MEMBER ? (passInput === freshSettings?.defaultMemberPassword) : (passInput === user.password);
+         const freshSettings = sRes?.config || settings || INITIAL_SETTINGS;
+         const isPasswordCorrect = finalUser.role === Role.MEMBER ? (passInput === freshSettings?.defaultMemberPassword) : (passInput === finalUser.password);
 
          if (isPasswordCorrect) {
             if (loginForm.remember) DataService.saveRememberMe(loginForm.email, loginForm.password); else DataService.clearRememberMe();
-            const updated = { ...user, isLoggedIn: true, currentMachineId: machineId };
+            const updated = { ...finalUser, isLoggedIn: true, currentMachineId: machineId };
 
             await DataService.updateSingleUser(updated);
             setCurrentUser(updated);
@@ -584,14 +616,42 @@ const App: React.FC = () => {
    };
 
    const handleLaunchProfile = async (profile: Profile) => {
-      if (isDesktop && window.nebulaAPI && profile.launchMode === 'external') {
-         // 🔄 INICIA STATUS DE CARREGAMENTO
-         setLaunchingStatus({ isLaunching: true, message: 'Preparando navegador...', profileName: profile.name });
+      // 🔄 INICIA STATUS DE CARREGAMENTO GLOBAL (p/ não deixar a UI travada)
+      setLaunchingStatus({ isLaunching: true, message: 'Preparando dados do perfil...', profileName: profile.name });
+
+      // 🔥 BANDA OTIMIZADA: Lazy Loading dos campos pesados para QUALQUER MODO (Interno ou Externo)
+      let profileToLaunch = { ...profile };
+      
+      try {
+         const { data: fullProfileData, error: fetchErr } = await supabase
+            .from('profiles')
+            .select('cookies, localStorage, automationScript')
+            .eq('id', profile.id)
+            .single();
+         
+         if (fetchErr) {
+            console.error('Erro Supabase ao baixar cookies:', fetchErr);
+            setToast({ msg: `Aviso: Falha ao baixar cookies da rede (${fetchErr.message}).`, type: 'error' });
+         } else if (fullProfileData) {
+            profileToLaunch = {
+               ...profileToLaunch,
+               cookies: fullProfileData.cookies,
+               localStorage: fullProfileData.localStorage,
+               automationScript: fullProfileData.automationScript
+            };
+         }
+      } catch (e) {
+         console.warn('⚠️ Falha ao baixar dados extras do perfil (offline?)', e);
+         setToast({ msg: 'Aviso: Rede instável, os cookies não foram baixados.', type: 'error' });
+      }
+
+      if (isDesktop && window.nebulaAPI && profileToLaunch.launchMode === 'external') {
+         setLaunchingStatus({ isLaunching: true, message: 'Preparando navegador...', profileName: profileToLaunch.name });
 
          // Usa modo NATIVO (com DRM e CF-Bypass) se useNativeBrowser, useExternalBrowserUI, ou secureAppMode estiverem habilitados
          // Caso contrário, usa Puppeteer (com auto-fill mas sem DRM)
          let res;
-         if ((profile.useNativeBrowser || profile.useExternalBrowserUI || profile.secureAppMode) && window.nebulaAPI.launchProfileNative) {
+         if ((profileToLaunch.useNativeBrowser || profileToLaunch.useExternalBrowserUI || profileToLaunch.secureAppMode) && window.nebulaAPI.launchProfileNative) {
             // 🔥 CLOUD SYNC: Verifica se existe sessão na Cloud e injeta antes de abrir
             try {
                setLaunchingStatus({ isLaunching: true, message: '☁️ Verificando sessão na Cloud...', profileName: profile.name });
@@ -622,7 +682,7 @@ const App: React.FC = () => {
             }
 
             try {
-               res = await window.nebulaAPI.launchProfileNative(profile, settings?.customBrowserPath);
+               res = await window.nebulaAPI.launchProfileNative(profileToLaunch, settings?.customBrowserPath);
             } catch (error) {
                console.error('IPC Falha NATIVA', error);
                res = { status: 'error', message: (error as Error).message };
@@ -630,7 +690,7 @@ const App: React.FC = () => {
          } else {
             setLaunchingStatus({ isLaunching: true, message: '🚀 Abrindo navegador...', profileName: profile.name });
             try {
-               res = await window.nebulaAPI.launchProfile(profile, settings?.customBrowserPath);
+               res = await window.nebulaAPI.launchProfile(profileToLaunch, settings?.customBrowserPath);
             } catch (error) {
                console.error('IPC Falha NON-NATIVE', error);
                res = { status: 'error', message: (error as Error).message };
@@ -644,8 +704,13 @@ const App: React.FC = () => {
          else setToast({ msg: 'Erro: ' + res.message, type: 'error' });
          return;
       }
-      if (!runningProfiles.find(p => p.id === profile.id)) setRunningProfiles(prev => [...prev, profile]);
-      setActiveProfileId(profile.id);
+      
+      // MODO INTERNO
+      if (!runningProfiles.find(p => p.id === profileToLaunch.id)) setRunningProfiles(prev => [...prev, profileToLaunch]);
+      setActiveProfileId(profileToLaunch.id);
+      
+      // 🔄 FINALIZA STATUS DE CARREGAMENTO GLOBAL
+      setLaunchingStatus({ isLaunching: false, message: '' });
    };
 
    const handleSaveNewUser = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -778,11 +843,19 @@ const App: React.FC = () => {
          };
          const next = editingProfile ? profiles.map(p => p.id === newP.id ? newP : p) : [...profiles, newP];
          setProfiles(next);
-         await DataService.saveProfiles(next);
-         setShowProfileModal(false);
-         setToast({ msg: 'Perfil salvo!', type: 'success' });
-      } catch (err) {
-         setToast({ msg: 'Erro ao salvar.', type: 'error' });
+         
+         // 🔥 SALVA APENAS ESTE PERFIL NO SUPABASE (super rápido e não falha)
+         const success = await DataService.upsertSingleProfile(newP);
+         
+         if (success) {
+            setShowProfileModal(false);
+            setToast({ msg: 'Perfil salvo e sincronizado na Nuvem!', type: 'success' });
+         } else {
+            setToast({ msg: 'Salvo localmente, mas falhou ao subir pra Cloud.', type: 'error' });
+         }
+      } catch (err: any) {
+         console.error("ERRO AO SALVAR PERFIL:", err);
+         setToast({ msg: 'Erro ao salvar: ' + (err.message || 'Erro desconhecido'), type: 'error' });
       } finally {
          setIsSaving(false);
       }
@@ -800,6 +873,48 @@ const App: React.FC = () => {
       } finally {
          setIsSaving(false);
       }
+   };
+
+   const handleBatchSync = async () => {
+      if (!window.nebulaAPI || !window.nebulaAPI.captureInternalSessionSilent) {
+         setToast({ msg: 'Recurso indisponível nesta versão do sistema.', type: 'error' });
+         return;
+      }
+      
+      const confirmSync = window.confirm("Deseja extrair e sincronizar as sessões de TODAS as ferramentas internas (em background)? Isso pode demorar alguns minutos dependendo da quantidade de ferramentas.");
+      if (!confirmSync) return;
+
+      setIsBatchSyncing(true);
+      
+      const internalProfiles = profiles.filter(p => p.launchMode === 'internal' && p.urls && p.urls.length > 0);
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < internalProfiles.length; i++) {
+         const p = internalProfiles[i];
+         setBatchSyncProgress(`Sincronizando ${i + 1}/${internalProfiles.length}: ${p.name}`);
+         
+         try {
+            const result = await window.nebulaAPI.captureInternalSessionSilent(p.id, p.urls[0]);
+            if (result.status === 'success') {
+               const cookiesStr = JSON.stringify(result.cookies || []);
+               await supabase.from('profiles').update({
+                  cookies: cookiesStr,
+                  localStorage: result.localStorage || "{}",
+                  session_updated_at: new Date().toISOString()
+               }).eq('id', p.id);
+               successCount++;
+            } else {
+               failCount++;
+            }
+         } catch (err) {
+            failCount++;
+         }
+      }
+
+      setIsBatchSyncing(false);
+      setBatchSyncProgress('');
+      setToast({ msg: `Sincronização em Lote Finalizada! Sucesso: ${successCount} | Falha: ${failCount}`, type: 'success' });
    };
 
    const handleDeleteProfile = async (id: string) => {
@@ -952,7 +1067,7 @@ const App: React.FC = () => {
                      <div className={`text-[9px] font-black uppercase flex items-center gap-2 ${vpsStatus.connected ? 'text-green-500' : 'text-red-500'}`}>
                         <div className={`w-2 h-2 rounded-full ${vpsStatus.connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 animate-pulse'}`}></div>
                         {vpsStatus.connected ? 'SUPABASE CLOUD ON' : 'OFFLINE MODE'}
-                        <span className="text-purple-500/50 border-l border-white/10 pl-2 ml-1">V3.0</span>
+                        <span className="text-purple-500/50 border-l border-white/10 pl-2 ml-1">V3.4</span>
                      </div>
                   </div>
 
@@ -994,19 +1109,20 @@ const App: React.FC = () => {
 
          <main className="flex-1 p-12 relative z-10 pb-48">
             {(activeTab === 'users' || activeTab === 'profiles') && (
-               <div className="max-w-[1920px] mx-auto grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
+               <div className="max-w-[1920px] mx-auto grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
                   {[
+                     { label: 'Ferramentas', val: profiles.length, color: 'text-purple-400', icon: LayoutGrid },
                      { label: 'Membros Cadastrados', val: stats.totalMembers, color: 'text-white', icon: Users },
                      { label: 'Contas Ativas', val: stats.activeMembers, color: 'text-green-500', icon: CheckSquare },
                      { label: 'Usuários Online', val: stats.onlineMembers, color: 'text-red-500', icon: Zap, online: true },
                      { label: isAdmin ? 'Revendedores Ativos' : 'HWID Painel', val: isAdmin ? stats.totalResellers : machineId.substring(0, 10), color: 'text-blue-500', icon: Shield }
                   ].map((s, idx) => (
-                     <div key={idx} className="bg-black/40 border border-white/5 rounded-3xl p-6 flex items-center gap-6 backdrop-blur-xl group hover:border-purple-500/20 transition-all">
-                        <div className={`w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center ${s.color}`}> <s.icon size={24} /> </div>
+                     <div key={idx} className="bg-black/40 border border-white/5 rounded-2xl p-4 flex items-center gap-4 backdrop-blur-xl group hover:border-purple-500/20 transition-all">
+                        <div className={`w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center ${s.color}`}> <s.icon size={20} /> </div>
                         <div className="flex flex-col relative">
-                           <span className="text-[10px] font-black uppercase text-gray-500">{s.label}</span>
+                           <span className="text-[9px] font-black uppercase text-gray-500 tracking-wider">{s.label}</span>
                            <div className="flex items-center gap-2">
-                              <span className={`text-2xl font-black ${s.color}`}>{s.val}</span>
+                              <span className={`text-xl font-black ${s.color}`}>{s.val}</span>
                               {s.online && (
                                  <div className="flex items-center gap-1.5 ml-2 bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20 shadow-[0_0_8px_#22c55e]">
                                     <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]"></div>
@@ -1064,7 +1180,22 @@ const App: React.FC = () => {
                            key={p.id}
                            profile={{ ...p, isFavorite: currentUser?.favorites?.includes(p.id) || false }}
                            onOpen={handleLaunchProfile}
-                           onEdit={isAdmin ? (prof => {
+                           onEdit={isAdmin ? (async (prof) => {
+                              setToast({ msg: 'Carregando dados completos do perfil...', type: 'info' });
+                              try {
+                                 const { data: fullData, error } = await supabase
+                                    .from('profiles')
+                                    .select('cookies, localStorage, automationScript')
+                                    .eq('id', prof.id)
+                                    .single();
+                                 if (!error && fullData) {
+                                    prof = { ...prof, ...fullData };
+                                 }
+                              } catch (e) {
+                                 console.warn('Erro ao carregar dados extras do perfil:', e);
+                              }
+                              setToast(null); // Clear loading toast
+
                               setEditingProfile(prof);
                               setModalSelectedCategories(prof.categories || []);
                               // 🔥 PRÉ-POPULA o campo de proxy se já existir um proxy salvo
@@ -1174,7 +1305,22 @@ const App: React.FC = () => {
                         <tbody className="divide-y divide-gray-800/50">
                            {getPaginatedUsers().map(u => (
                               <tr key={u.id} className="hover:bg-white/5 transition-all group">
-                                 <td className="px-10 py-6"> <div className="flex items-center gap-4"> <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${u.blocked ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-500'}`}>{u.email?.[0]?.toUpperCase()}</div> <div className="flex flex-col"><span className="font-bold text-sm">{u.email}</span><span className="text-[9px] text-gray-600 font-black">{u.id}</span></div> </div> </td>
+                                 <td className="px-10 py-6">
+                                    <div className="flex items-center gap-4">
+                                       <div className={`w-12 h-12 min-w-[48px] rounded-2xl flex items-center justify-center font-black ${u.blocked ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-500'}`}>
+                                          {u.email?.[0]?.toUpperCase()}
+                                       </div>
+                                       <div className="flex flex-col">
+                                          <span className="font-bold text-sm">{u.email}</span>
+                                          <span className="text-[9px] text-gray-600 font-black">{u.id}</span>
+                                          {u.role === Role.MEMBER && u.ownerId && u.ownerId !== 'ADMIN' && (
+                                             <span className="text-[9px] text-blue-500 font-black uppercase mt-1 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20 max-w-fit">
+                                                Rev: {users.find(x => x.id === u.ownerId)?.email || 'Desconhecido'}
+                                             </span>
+                                          )}
+                                       </div>
+                                    </div>
+                                 </td>
                                  <td className="px-10 py-6">
                                     <div className="flex flex-col gap-2">
                                        <span className={`px-4 py-1 rounded-full text-[9px] font-black uppercase border max-w-fit ${u.blocked ? 'bg-red-900/20 text-red-500 border-red-500/30' : 'bg-green-900/20 text-green-500 border-green-500/30'}`}>{u.blocked ? 'BLOQUEADO' : 'ATIVO'}</span>
@@ -1189,9 +1335,51 @@ const App: React.FC = () => {
                                  <td className="px-10 py-6"><span className="text-xs font-mono text-gray-500">{u.expirationDate ? new Date(u.expirationDate).toLocaleDateString() : 'VITALÍCIO'}</span></td>
                                  <td className="px-10 py-6 text-right">
                                     <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all">
-                                       <button title="Expulsar do Sistema" onClick={() => { if (window.confirm(`Derrubar conexão de ${u.email}?`)) { const n = users.map(x => x.id === u.id ? { ...x, isLoggedIn: false, currentMachineId: undefined } : x); setUsers(n); DataService.updateSingleUser(n.find(x => x.id === u.id)!); setToast({ msg: 'Sessão derrubada!', type: 'success' }); } }} className="p-3 bg-white/5 hover:bg-yellow-600 rounded-xl text-yellow-500 hover:text-white transition-all"><UserX size={16} /></button>
+                                       <button title="Expulsar do Sistema" onClick={async () => {
+                                          if (window.confirm(`Derrubar conexão de ${u.email}?`)) {
+                                             setIsSaving(true);
+                                             try {
+                                                // 1. Atualização Otimista UI
+                                                const updatedUser = { ...u, isLoggedIn: false, currentMachineId: undefined };
+                                                const newUsers = users.map(x => x.id === u.id ? updatedUser : x);
+                                                setUsers(newUsers);
+                                                
+                                                // 2. Chama o DataService (que resolve Supabase e Fallback local)
+                                                await DataService.updateSingleUser(updatedUser as any);
+                                                
+                                                setToast({ msg: '✅ Sessão derrubada com sucesso!', type: 'success' });
+                                             } catch (e: any) {
+                                                console.error('Erro ao derrubar sessão', e);
+                                                setToast({ msg: 'Sessão derrubada offline (aguardando rede).', type: 'info' });
+                                             } finally {
+                                                setIsSaving(false);
+                                             }
+                                          }
+                                       }} className="p-3 bg-white/5 hover:bg-yellow-600 rounded-xl text-yellow-500 hover:text-white transition-all"><UserX size={16} /></button>
                                        <button onClick={() => { setEditingUser(u); setIsLifetime(!u.expirationDate); setShowEditUserModal(true); }} className="p-3 bg-white/5 hover:bg-purple-600 rounded-xl text-gray-400 hover:text-white transition-all"><Edit2 size={16} /></button>
-                                       <button onClick={() => { const n = users.map(x => x.id === u.id ? { ...x, blocked: !x.blocked } : x); setUsers(n); DataService.updateSingleUser(n.find(x => x.id === u.id)!); }} className="p-3 bg-white/5 hover:bg-orange-600 rounded-xl text-orange-500 hover:text-white transition-all"><Ban size={16} /></button>
+                                       <button onClick={() => {
+                                          const isBlocking = !u.blocked;
+                                          const usersToUpdate = [{ ...u, blocked: isBlocking }];
+                                          
+                                          // Se for revendedor, bloqueia/desbloqueia todos os membros dele
+                                          if (u.role === Role.RESELLER) {
+                                             users.forEach(m => {
+                                                if (m.ownerId === u.id && m.role === Role.MEMBER) {
+                                                   usersToUpdate.push({ ...m, blocked: isBlocking });
+                                                }
+                                             });
+                                          }
+                                          
+                                          const updatedIds = usersToUpdate.map(x => x.id);
+                                          const n = users.map(x => updatedIds.includes(x.id) ? usersToUpdate.find(y => y.id === x.id)! : x);
+                                          setUsers(n);
+                                          
+                                          usersToUpdate.forEach(updated => DataService.updateSingleUser(updated as any));
+                                          
+                                          if (u.role === Role.RESELLER && usersToUpdate.length > 1) {
+                                             setToast({ msg: `Revendedor e ${usersToUpdate.length - 1} membro(s) ${isBlocking ? 'bloqueados' : 'desbloqueados'}!`, type: 'success' });
+                                          }
+                                       }} className="p-3 bg-white/5 hover:bg-orange-600 rounded-xl text-orange-500 hover:text-white transition-all"><Ban size={16} /></button>
                                        <button onClick={async () => { if (window.confirm('Excluir acesso permanentemente da Nuvem?')) { setIsSaving(true); try { const success = await DataService.deleteUser(u.id); if (success) { setUsers(prev => prev.filter(x => x.id !== u.id)); setToast({ msg: 'Membro removido da Cloud!', type: 'success' }); } else { setToast({ msg: 'Erro ao remover na cloud', type: 'error' }); } } finally { setIsSaving(false); } } }} className="p-3 bg-red-900/20 hover:bg-red-600 rounded-xl text-red-400 hover:text-white transition-all"><Trash2 size={16} /></button>
                                     </div>
                                  </td>
@@ -1440,7 +1628,16 @@ const App: React.FC = () => {
                            </div>
                         </div>
 
-                        <div className="flex justify-end pt-8"> <Button onClick={handleGlobalSave} className="!px-16 !py-6 font-black tracking-[0.3em] !text-xs" disabled={isSaving}> <Save size={24} /> {isSaving ? 'SALVANDO...' : 'SINCRONIZAR TUDO NA NUVEM'} </Button> </div>
+                        <div className="flex justify-end pt-8 gap-4 items-center">
+                           {isBatchSyncing && <span className="text-sm font-bold text-cyan-400 animate-pulse">{batchSyncProgress}</span>}
+                           <Button onClick={handleBatchSync} className="!px-8 !py-6 font-black tracking-[0.2em] !text-xs bg-blue-600 hover:bg-blue-500" disabled={isBatchSyncing || isSaving}>
+                              <UploadCloud size={24} className={isBatchSyncing ? "animate-bounce" : ""} /> 
+                              {isBatchSyncing ? 'EXTRAINDO SESSÕES...' : '☁️ SINCRONIZAR TODAS AS SESSÕES (NUVEM)'}
+                           </Button>
+                           <Button onClick={handleGlobalSave} className="!px-16 !py-6 font-black tracking-[0.3em] !text-xs" disabled={isSaving || isBatchSyncing}> 
+                              <Save size={24} /> {isSaving ? 'SALVANDO...' : 'SALVAR CONFIGURAÇÕES'} 
+                           </Button> 
+                        </div>
                      </>
                   )}
 
@@ -1557,7 +1754,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="space-y-6">
                      <label className="text-[10px] font-black uppercase text-gray-600">URLs (Iniciais)</label>
-                     <textarea name="urls" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm h-32 outline-none focus:border-purple-500 font-mono" defaultValue={editingProfile?.urls?.join('\n') || ''} required />
+                     <textarea name="urls" spellCheck={false} className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-sm h-32 outline-none focus:border-purple-500 font-mono" defaultValue={editingProfile?.urls?.join('\n') || ''} required />
                      <Input name="orderIndex" label="Índice de Ordem" type="number" defaultValue={editingProfile?.orderIndex} />
                      <Input name="videoTutorial" label="Link de Instruções (Tutorial)" defaultValue={editingProfile?.videoTutorial} />
                      <div className="space-y-1">
@@ -1585,11 +1782,11 @@ const App: React.FC = () => {
                      </div>
                      <div className="space-y-4">
                         <label className="text-[10px] font-black uppercase text-gray-600">Cookies JSON</label>
-                        <textarea name="cookies" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-gray-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.cookies} />
+                        <textarea name="cookies" spellCheck={false} className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-gray-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.cookies} />
                         <label className="text-[10px] font-black uppercase text-gray-600">Script de Automação (JS)</label>
-                        <textarea name="automationScript" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-green-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.automationScript} />
+                        <textarea name="automationScript" spellCheck={false} className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-green-500 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.automationScript} />
                         <label className="text-[10px] font-black uppercase text-gray-600">CSS Personalizado (Injeção)</label>
-                        <textarea name="customCSS" className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-blue-400 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.customCSS} />
+                        <textarea name="customCSS" spellCheck={false} className="w-full bg-[#111] border border-gray-800 rounded-2xl p-4 text-[10px] font-mono text-blue-400 h-24 outline-none focus:border-purple-500" defaultValue={editingProfile?.customCSS} />
                      </div>
                   </div>
                </div>

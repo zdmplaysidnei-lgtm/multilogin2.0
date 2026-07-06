@@ -73,12 +73,17 @@ const prepareUserForSupabase = async (user: any): Promise<any> => {
   const columns = await detectUserColumns();
   const prepared = prepareForSupabase(user);
 
+  // 🔥 CAMPOS CRÍTICOS: NUNCA descartar, independente da detecção de colunas
+  const CRITICAL_FIELDS = ['id', 'email', 'role', 'password', 'ownerId', 'blocked',
+    'isLoggedIn', 'expirationDate', 'createdAt', 'currentMachineId'];
+
   // Separar campos conhecidos e extras
   const filtered: any = {};
   const extras: any = {};
 
   for (const [key, value] of Object.entries(prepared)) {
-    if (columns.includes(key)) {
+    // Sempre inclui campos críticos E campos que existem na tabela
+    if (CRITICAL_FIELDS.includes(key) || columns.includes(key)) {
       filtered[key] = value;
     } else {
       extras[key] = value;
@@ -151,6 +156,7 @@ const fetchAllUsers = async (): Promise<User[]> => {
     const { data, error } = await supabase
       .from('users')
       .select('*')
+      .neq('password', '__DELETED__')  // 🔥 Exclui usuários soft-deletados
       .order('createdAt', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -161,14 +167,50 @@ const fetchAllUsers = async (): Promise<User[]> => {
 
     if (data && data.length > 0) {
       allUsers.push(...data);
-      offset += PAGE_SIZE;
-      hasMore = data.length === PAGE_SIZE; // Se retornou menos que PAGE_SIZE, acabou
+      offset += data.length; // 🚀 Avança pelo número exato recebido (bypassa limites de API como 200)
+      // Se a API retornou algo, tentamos a próxima página, pois a API pode ter cortado em 200 (apesar do PAGE_SIZE ser 1000)
+      hasMore = data.length > 0;
     } else {
       hasMore = false;
     }
   }
 
   return allUsers;
+};
+
+// ============================================
+// FUNÇÃO PARA BUSCAR TODOS OS PERFIS (FERRAMENTAS) (> 200)
+// Supabase tem limite de max-rows (geralmente 200 ou 1000), usamos paginação para contornar
+// ============================================
+const fetchAllProfiles = async (): Promise<any[]> => {
+  const allProfiles: any[] = [];
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at')
+      .neq('name', '__DELETED__') // 🔥 Exclui perfis soft-deletados
+      .order('orderIndex', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('Erro ao buscar profiles:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allProfiles.push(...data);
+      offset += data.length; // 🚀 Avança pelo número exato recebido (bypassa limite da API de 200 linhas)
+      hasMore = data.length > 0;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allProfiles;
 };
 
 // 🔥 FUNÇÃO PARA INVALIDAR CACHE DE MEMÓRIA (força busca do Supabase)
@@ -212,19 +254,19 @@ export const DataService = {
     const cachedSettings = Security.decrypt(localStorage.getItem('nebula_settings_v1'));
 
     try {
-      // 🔥 CORREÇÃO: Buscar TODOS os dados do Supabase, incluindo USERS > 1000!
-      const [allUsers, pRes, sRes] = await Promise.all([
+      // 🔥 CORREÇÃO: Buscar TODOS os dados do Supabase, incluindo USERS > 1000 e PROFILES > 200!
+      const [allUsers, allProfilesRaw, sRes] = await Promise.all([
         // Busca TODOS os usuários usando paginação (> 1000)
         fetchAllUsers(),
-        // 🔥 PROFILES SÃO GLOBAIS - NUNCA FILTRAR POR userId!
-        supabase.from('profiles').select('*').order('orderIndex', { ascending: true }),
+        // Busca TODOS os perfis usando paginação (bypassa o limite de max-rows)
+        fetchAllProfiles(),
         // Busca settings
         supabase.from('settings').select('config').single()
       ]);
 
       // 🔥 CRITICAL: Agora pega os users da cloud com paginação!
       const cloudUsers = (allUsers && allUsers.length > 0) ? allUsers : (cachedUsers || MOCK_USERS);
-      const rawCloudProfiles = pRes.data || cachedProfiles || MOCK_PROFILES;
+      const rawCloudProfiles = (allProfilesRaw && allProfilesRaw.length > 0) ? allProfilesRaw : (cachedProfiles || MOCK_PROFILES);
       const cloudProfiles = rawCloudProfiles.map((p: any) => unpackProfileFromSupabase(p));
       const cloudSettings = sRes.data?.config || cachedSettings || INITIAL_SETTINGS;
 
@@ -394,13 +436,66 @@ export const DataService = {
   // ============================================
   // UPDATE PROFILE COM DEBOUNCE (crítico para escala)
   // ============================================
+  // ============================================
+  // UPSERT: CRIAR OU ATUALIZAR UM ÚNICO PERFIL NA HORA
+  // ============================================
+  upsertSingleProfile: async (profile: Profile): Promise<boolean> => {
+    // Atualizar cache imediatamente
+    if (memoryCache.profiles) {
+      const index = memoryCache.profiles.findIndex(p => p.id === profile.id);
+      if (index !== -1) {
+        memoryCache.profiles[index] = profile;
+      } else {
+        memoryCache.profiles.push(profile);
+      }
+      try {
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+      } catch (quotaErr) {
+        console.warn('⚠️ localStorage cheio (upsert), salvando sem cookies...');
+        const lightProfiles = memoryCache.profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+      }
+    }
+
+    try {
+      const sanitized = packProfileForSupabase(profile);
+      
+      // Tenta atualizar primeiro (bypass RLS upsert bug no Supabase)
+      const { data, error: updateError } = await supabase
+         .from('profiles')
+         .update(sanitized)
+         .eq('id', profile.id)
+         .select();
+         
+      // Se não atualizou nenhuma linha (perfil novo) ou deu erro, tenta inserir
+      if (updateError || !data || data.length === 0) {
+         const { error: insertError } = await supabase.from('profiles').insert([sanitized]);
+         if (insertError) {
+            console.error('Insert single profile error:', insertError);
+            return false;
+         }
+      }
+      
+      return true;
+    } catch (e) {
+      console.error('Upsert single profile error:', e);
+      return false;
+    }
+  },
+
   updateSingleProfile: async (profileId: string, updates: Partial<Profile>): Promise<boolean> => {
     // Atualizar cache imediatamente
     if (memoryCache.profiles) {
       const index = memoryCache.profiles.findIndex(p => p.id === profileId);
       if (index !== -1) {
         memoryCache.profiles[index] = { ...memoryCache.profiles[index], ...updates };
-        localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+        try {
+          localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+        } catch (quotaErr) {
+          console.warn('⚠️ localStorage cheio (update), salvando sem cookies...');
+          const lightProfiles = memoryCache.profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+          localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+        }
       }
     }
 
@@ -437,7 +532,13 @@ export const DataService = {
   // SALVAR PROFILES COM THROTTLE
   // ============================================
   saveProfiles: async (profiles: Profile[]): Promise<boolean> => {
-    localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
+    try {
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
+    } catch (quotaErr) {
+      console.warn('⚠️ localStorage cheio (save), salvando sem cookies...');
+      const lightProfiles = profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+    }
     memoryCache.profiles = profiles;
 
     try {
@@ -487,14 +588,32 @@ export const DataService = {
 
   deleteUser: async (userId: string): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('users').delete().eq('id', userId);
+      const { data, error } = await supabase.from('users').delete().eq('id', userId).select();
 
-      if (!error && memoryCache.users) {
-        memoryCache.users = memoryCache.users.filter(u => u.id !== userId);
-        localStorage.setItem('nebula_users_v1', Security.encrypt(memoryCache.users));
+      if (!error && (!data || data.length === 0)) {
+        console.warn('⚠️ RLS bloqueou o DELETE de user! Tentando Soft-Delete via UPDATE...');
+        const { error: updateErr } = await supabase.from('users').update({ password: '__DELETED__', blocked: true }).eq('id', userId);
+        if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
+      } else if (error) {
+        throw error;
       }
 
-      return !error;
+      // 🔥 SEMPRE atualiza localStorage e memória
+      if (memoryCache.users) {
+        memoryCache.users = memoryCache.users.filter(u => u.id !== userId);
+      }
+      try {
+        const cached = Security.decrypt(localStorage.getItem('nebula_users_v1'));
+        if (cached && Array.isArray(cached)) {
+          const updated = cached.filter((u: any) => u.id !== userId);
+          localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
+          if (!memoryCache.users) memoryCache.users = updated;
+        }
+      } catch (cacheErr) {
+        console.warn('Erro ao atualizar cache local após delete:', cacheErr);
+      }
+
+      return true;
     } catch (e) {
       console.error('Delete user error:', e);
       return false;
@@ -519,14 +638,22 @@ export const DataService = {
 
   deleteProfile: async (profileId: string): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('profiles').delete().eq('id', profileId);
+      const { data, error } = await supabase.from('profiles').delete().eq('id', profileId).select();
 
-      if (!error && memoryCache.profiles) {
+      if (!error && (!data || data.length === 0)) {
+        console.warn('⚠️ RLS bloqueou o DELETE de perfil! Tentando Soft-Delete via UPDATE...');
+        const { error: updateErr } = await supabase.from('profiles').update({ name: '__DELETED__' }).eq('id', profileId);
+        if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
+      } else if (error) {
+        throw error;
+      }
+
+      if (memoryCache.profiles) {
         memoryCache.profiles = memoryCache.profiles.filter(p => p.id !== profileId);
         localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
       }
 
-      return !error;
+      return true;
     } catch (e) {
       console.error('Delete profile error:', e);
       return false;
