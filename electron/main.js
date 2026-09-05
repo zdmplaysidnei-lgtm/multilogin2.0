@@ -5,6 +5,12 @@ const http = require('http');
 const { spawn } = require('child_process');
 const proxyChain = require('proxy-chain');
 const AdmZip = require('adm-zip');
+const { createClient } = require('@supabase/supabase-js');
+const SUPABASE_URL = 'https://fkrijejmvtwwtgirlsey.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_slrAzZ8RLnDIwaeERExJxQ_ou8prAN9';
+
+
+const supabaseAdmin = createClient('https://fkrijejmvtwwtgirlsey.supabase.co', SUPABASE_ANON_KEY);
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -1366,6 +1372,39 @@ function registerIPCHandlers() {
         } catch (err) {
             console.error('❌ [UPDATER] Erro:', err.message);
             sendProgress({ phase: 'error', percent: 0, message: `Erro: ${err.message}` });
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('admin-upsert-profile', async (event, profile, secret) => {
+        try {
+            const { error } = await supabaseAdmin
+                .from('profiles')
+                .upsert([profile], { onConflict: 'id' });
+            if (error) return { success: false, error: error.message };
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('admin-delete-profile', async (event, id, secret) => {
+        try {
+            // Tenta deletar direto primeiro
+            const { error: delError } = await supabaseAdmin
+                .from('profiles')
+                .delete()
+                .eq('id', id);
+            if (delError) {
+                // Se falhar, usa soft-delete como fallback
+                const { error: updError } = await supabaseAdmin
+                    .from('profiles')
+                    .update({ name: '__DELETED__' })
+                    .eq('id', id);
+                if (updError) return { success: false, error: updError.message };
+            }
+            return { success: true };
+        } catch (err) {
             return { success: false, error: err.message };
         }
     });

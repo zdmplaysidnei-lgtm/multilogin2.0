@@ -21,9 +21,10 @@ export const DataService = {
     const cachedSettings = Security.decrypt(localStorage.getItem('nebula_settings_v1'));
 
     try {
+      console.log("🔥 BUSCANDO PERFIS OTIMIZADOS DO SUPABASE 🔥");
       const [uRes, pRes, sRes] = await Promise.all([
         supabase.from('users').select('*'),
-        supabase.from('profiles').select('*').order('orderIndex', { ascending: true }),
+        supabase.from('profiles').select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at').order('orderIndex', { ascending: true }),
         supabase.from('settings').select('config').single()
       ]);
 
@@ -31,19 +32,29 @@ export const DataService = {
       const cloudProfiles = pRes.data || [];
       const cloudSettings = sRes.data?.config || INITIAL_SETTINGS;
 
-      // Anti-wipe: não apaga local se nuvem estiver vazia por erro
-      if (cloudProfiles.length === 0 && cachedProfiles && cachedProfiles.length > 0) {
-        return { users: cloudUsers, profiles: cachedProfiles, settings: cloudSettings, isOffline: false };
+      // Anti-wipe desativado temporariamente para debug
+      // if (cloudProfiles.length === 0 && cachedProfiles && cachedProfiles.length > 0) { ... }
+
+      if (pRes.error) {
+         cloudSettings.updateMessage = `DB_ERROR: ${pRes.error.message} (code: ${pRes.error.code})`;
+      } else if (cloudProfiles.length === 0) {
+         cloudSettings.updateMessage = `DB_EMPTY: 0 rows returned for profiles.`;
       }
 
-      DataService.saveToLocalCache(cloudUsers, cloudProfiles, cloudSettings);
+      // Salva no cache sem deixar falhas de quota matarem o retorno
+      try { DataService.saveToLocalCache(cloudUsers, cloudProfiles, cloudSettings); } catch (cacheErr) {
+        console.warn('Cache write failed (quota?), continuing anyway:', cacheErr);
+      }
+
+      console.log(`✅ DataService retornando ${cloudProfiles.length} perfis do Supabase`);
       return { users: cloudUsers, profiles: cloudProfiles, settings: cloudSettings, isOffline: false };
     } catch (error) {
       return {
         users: cachedUsers || MOCK_USERS,
         profiles: cachedProfiles || MOCK_PROFILES,
-        settings: cachedSettings || INITIAL_SETTINGS,
-        isOffline: true
+        settings: { ...(cachedSettings || INITIAL_SETTINGS), updateMessage: `CATCH_ERROR: ${String(error)}` },
+        isOffline: true,
+        catchError: String(error)
       };
     }
   },
@@ -70,13 +81,49 @@ export const DataService = {
     try {
       if (!profiles || profiles.length === 0) return true;
 
-      const sanitized = profiles.map(p => cleanForSupabase(p));
-      const { error } = await supabase.from('profiles').upsert(sanitized, { onConflict: 'id' });
-
-      if (error) {
-        console.error("Erro Supabase:", error.message);
-        return false;
+      // Envia em lotes de 5 para evitar limite de payload do Supabase
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+        const batch = profiles.slice(i, i + BATCH_SIZE);
+        const sanitized = batch.map(p => cleanForSupabase(p));
+        const { error } = await supabase.from('profiles').upsert(sanitized, { onConflict: 'id' });
+        if (error) {
+          console.error("Erro Supabase batch:", error.message);
+          return false;
+        }
+        // Pequeno delay entre lotes
+        if (i + BATCH_SIZE < profiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
       }
+      return true;
+    } catch (e) { return false; }
+  },
+
+  upsertSingleProfile: async (profile: Profile): Promise<boolean> => {
+    try {
+      const sanitized = cleanForSupabase(profile);
+
+      // 🚀 Usa o IPC do Electron (supabaseAdmin com poderes totais) se disponível
+      if (typeof window !== 'undefined' && (window as any).nebulaAPI?.db?.upsertProfile) {
+        const result = await (window as any).nebulaAPI.db.upsertProfile(sanitized);
+        if (!result.success) {
+          console.error('IPC upsert error:', result.error);
+          return false;
+        }
+      } else {
+        const { error } = await supabase.from('profiles').upsert([sanitized], { onConflict: 'id' });
+        if (error) {
+          console.error("Erro upsert single:", error.message);
+          return false;
+        }
+      }
+
+      // Atualiza cache local
+      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
+      const updated = cached.map((p: Profile) => p.id === profile.id ? profile : p);
+      if (!cached.find((p: Profile) => p.id === profile.id)) updated.push(profile);
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
       return true;
     } catch (e) { return false; }
   },
@@ -103,8 +150,23 @@ export const DataService = {
   // Fix: Added missing deleteProfile method
   deleteProfile: async (profileId: string): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('profiles').delete().eq('id', profileId);
-      if (error) return false;
+      // 🚀 Usa o IPC do Electron (supabaseAdmin) se disponível
+      if (typeof window !== 'undefined' && (window as any).nebulaAPI?.db?.deleteProfile) {
+        const result = await (window as any).nebulaAPI.db.deleteProfile(profileId);
+        if (!result.success) {
+          console.error('IPC delete error:', result.error);
+          return false;
+        }
+      } else {
+        // Tenta deletar direto
+        const { error } = await supabase.from('profiles').delete().eq('id', profileId);
+        if (error) {
+          // Fallback: soft-delete renomeando para __DELETED__
+          const { error: softErr } = await supabase.from('profiles').update({ name: '__DELETED__' }).eq('id', profileId);
+          if (softErr) return false;
+        }
+      }
+      // Atualiza cache local
       const current = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
       localStorage.setItem('nebula_profiles_v1', Security.encrypt(current.filter((p: any) => p.id !== profileId)));
       return true;
@@ -112,9 +174,9 @@ export const DataService = {
   },
 
   saveToLocalCache: (users: User[], profiles: Profile[], settings: AppSettings) => {
-    localStorage.setItem('nebula_users_v1', Security.encrypt(users));
-    localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
-    localStorage.setItem('nebula_settings_v1', Security.encrypt(settings));
+    // NÃO salvar users nem profiles (muito grandes para o localStorage do Electron)
+    // Só salvar settings (pequeno)
+    try { localStorage.setItem('nebula_settings_v1', Security.encrypt(settings)); } catch(e) { console.warn('Cache settings failed:', e); }
   },
 
   getRememberMe: () => Security.decrypt(localStorage.getItem('nebula_auth_remember')),

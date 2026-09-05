@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
 import { Profile } from '../types';
 
@@ -185,10 +185,10 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
     if (!profile.automationScript || !webview) return;
     const safeScript = `
       (function() {
-        if (!sessionStorage.getItem('nebula_script_run')) {
+        if (!window.__nebula_script_run) {
           try {
             ${profile.automationScript}
-            sessionStorage.setItem('nebula_script_run', 'true');
+            window.__nebula_script_run = true;
           } catch(e) { console.error(e); }
         }
       })();

@@ -58,23 +58,4 @@ export const MOCK_USERS: User[] = [
   { id: '1', email: 'admin@sidnei.com', role: Role.ADMIN, password: 'admin', createdAt: Date.now(), blocked: false, isLoggedIn: false },
 ];
 
-export const MOCK_PROFILES: Profile[] = [
-  {
-    id: 'p1', name: 'Netflix Premium', status: 'active',
-    coverImage: 'https://images.ctfassets.net/4cd45et68cgf/4nBn7n6vL99yC9f76UMp6O/93b2161358f2d591605342a843e990c7/Netflix-Symbol.png',
-    urls: ['https://netflix.com'], launchMode: 'external', loginType: 'cookies', isFavorite: true, createdAt: Date.now(),
-    fingerprint: defaultFingerprint, orderIndex: 0
-  },
-  {
-    id: 'p2', name: 'Canva Pro', status: 'active',
-    coverImage: 'https://static.canva.com/web/images/852504936d65313988b4d8981358d712.png',
-    urls: ['https://canva.com'], launchMode: 'external', loginType: 'cookies', isFavorite: false, createdAt: Date.now(),
-    fingerprint: defaultFingerprint, orderIndex: 1
-  },
-  {
-    id: 'p3', name: 'ChatGPT Plus', status: 'active',
-    coverImage: 'https://static.vecteezy.com/system/resources/previews/021/495/996/non_2x/chatgpt-logo-chat-gpt-icon-on-black-background-free-vector.jpg',
-    urls: ['https://chat.openai.com'], launchMode: 'external', loginType: 'cookies', isFavorite: false, createdAt: Date.now(),
-    fingerprint: defaultFingerprint, orderIndex: 2
-  }
-];
+export const MOCK_PROFILES: Profile[] = [];

@@ -27,4 +27,9 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
   downloadAndInstallUpdate: (url) => ipcRenderer.invoke('download-and-install-update', url),
   onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (_event, data) => callback(data)),
+  // 🗄️ Database Secura IPC
+  db: {
+    upsertProfile: (profile, secret) => ipcRenderer.invoke('admin-upsert-profile', profile, secret),
+    deleteProfile: (id, secret) => ipcRenderer.invoke('admin-delete-profile', id, secret)
+  }
 });

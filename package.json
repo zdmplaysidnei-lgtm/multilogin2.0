@@ -1,11 +1,11 @@
 {
-  "name": "rateioflix-ferramentas",
+  "name": "multilogin-master",
   "productName": "Sidnei - Ferramentas Ilimitadas",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "private": true,
   "main": "./electron/main.js",
   "homepage": "./",
-  "description": "Sistema de multilogin avançado estilo Netflix",
+  "description": "Multilogin Master",
   "author": {
     "name": "Sidnei - Ferramentas Ilimitadas",
     "email": "rateioflix@example.com"
@@ -15,6 +15,7 @@
     "adm-zip": "^0.5.16",
     "axios": "^1.6.0",
     "crypto-js": "^4.2.0",
+    "csv-parser": "^3.2.1",
     "lucide-react": "^0.344.0",
     "proxy-chain": "^2.7.1",
     "puppeteer-core": "^22.0.0",

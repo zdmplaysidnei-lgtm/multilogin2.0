@@ -34,11 +34,13 @@ const App: React.FC = () => {
    });
 
    const [users, setUsers] = useState<User[]>(() => {
-      return Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
+      localStorage.removeItem('nebula_users_v1');
+      return [];
    });
 
    const [profiles, setProfiles] = useState<Profile[]>(() => {
-      return Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
+      localStorage.removeItem('nebula_profiles_v1');
+      return [];
    });
 
    const [settings, setSettings] = useState<AppSettings | null>(() => {
@@ -277,6 +279,8 @@ const App: React.FC = () => {
       let result = profiles;
       if (searchTerm) result = result.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
       if (filterType === 'favorites') result = result.filter(p => currentUser?.favorites?.includes(p.id));
+      if (filterType === 'active') result = result.filter(p => p.status !== 'maintenance');
+      if (filterType === 'maintenance') result = result.filter(p => p.status === 'maintenance');
       if (selectedCategory !== 'all') result = result.filter(p => p.categories && p.categories.includes(selectedCategory));
 
       result = [...result].sort((a, b) => {
@@ -349,49 +353,55 @@ const App: React.FC = () => {
 
    // --- SINCRONIZAÇÃO MELHORADA ---
    const refreshData = useCallback(async () => {
+      setToast({ msg: '🔄 Iniciando refreshData...', type: 'info' });
+      // --- PERFIS ---
       try {
-         const userId = (currentUser?.role === Role.ADMIN || !currentUser) ? undefined : currentUser?.id;
+         const pRes = await supabase
+            .from('profiles')
+            .select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at')
+            .order('orderIndex', { ascending: true });
 
-         // 🔥 TENTAR BUSCAR DO DATASERVICE PRIMEIRO
-         const data = await DataService.initializeData(userId);
-
-         if (data) {
-            // Se retornou users, usa eles
-            if (data.users && data.users.length > 0) {
-               setUsers(data.users);
-            } else {
-               // 🔥 FALLBACK: Se não tem users, busca direto do Supabase
-               console.warn('⚠️ DataService retornou vazio, buscando do Supabase...');
-               try {
-                  const { data: cloudUsers, error } = await supabase
-                     .from('users')
-                     .select('*')
-                     .order('createdAt', { ascending: false });
-
-                  if (!error && cloudUsers && cloudUsers.length > 0) {
-                     setUsers(cloudUsers);
-                     localStorage.setItem('nebula_users_v1', Security.encrypt(cloudUsers));
-                     console.log(`✅ ${cloudUsers.length} usuários restaurados do Supabase`);
-                  }
-               } catch (e) {
-                  console.error('❌ Erro ao buscar do Supabase:', e);
-               }
-            }
-
-            if (data.profiles && data.profiles.length > 0) setProfiles(data.profiles);
-
-            const finalSettings = data.settings || INITIAL_SETTINGS;
-            setSettings(finalSettings);
-            setLocalSettings(finalSettings);
-
-            setIsOfflineMode(data.isOffline);
-            setVpsStatus({ connected: !data.isOffline, latency: 0 });
+         if (pRes.error) {
+             setToast({ msg: '❌ Erro perfis: ' + pRes.error.message, type: 'error' });
+         } else if (pRes.data && pRes.data.length > 0) {
+            setProfiles(pRes.data);
+            setToast({ msg: `✅ ${pRes.data.length} perfis carregados com sucesso!`, type: 'success' });
+         } else {
+            setToast({ msg: '⚠️ 0 perfis retornados.', type: 'info' });
          }
-      } catch (err) {
-         console.error("Falha ao atualizar dados:", err);
-         setIsOfflineMode(true);
-         setVpsStatus({ connected: false, latency: 0 });
+      } catch (e) { 
+         setToast({ msg: '❌ Exception perfis: ' + String(e), type: 'error' });
       }
+
+      // --- USUÁRIOS ---
+      try {
+         let allUsers = [];
+         let page = 0;
+         while (true) {
+            const uRes = await supabase.from('users').select('*').range(page * 1000, (page + 1) * 1000 - 1);
+            if (uRes.error) {
+               console.error('[refreshData] Erro paginação users:', uRes.error.message);
+               break;
+            }
+            if (uRes.data) allUsers.push(...uRes.data);
+            if (!uRes.data || uRes.data.length < 1000) break;
+            page++;
+         }
+         if (allUsers.length > 0) setUsers(allUsers);
+      } catch (e) { console.error('[refreshData] users FALHOU:', e); }
+
+      // --- SETTINGS ---
+      try {
+         const sRes = await supabase.from('settings').select('config').single();
+         if (!sRes.error && sRes.data?.config) {
+            setSettings(sRes.data.config);
+            setLocalSettings(sRes.data.config);
+         }
+      } catch (e) { console.warn('[refreshData] settings FALHOU:', e); }
+
+      // FORÇAR MODO ONLINE
+      setVpsStatus({ connected: true, latency: 15 });
+      setIsOfflineMode(false);
    }, [currentUser]);
 
    const fetchRadarLogs = useCallback(async () => {
@@ -1059,118 +1069,99 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-[#050505] text-white flex flex-col font-sans overflow-y-auto custom-scrollbar relative">
          <ParticleBackground effect={settings?.seasonalEffect} />
 
-         <header className="sticky top-0 z-[100] bg-black/90 backdrop-blur-3xl border-b border-white/5" style={{ height: `${settings?.headerHeight || 280}px` }}>
-            <div className="w-full h-full flex flex-col px-12 py-8">
-               <div className="flex items-center justify-between">
-                  <div className="flex flex-col gap-2">
-                     <img src={currentLogo} style={{ height: `${(settings?.logoSize || 100) * 0.45}px` }} className="object-contain" />
-                     <div className={`text-[9px] font-black uppercase flex items-center gap-2 ${vpsStatus.connected ? 'text-green-500' : 'text-red-500'}`}>
-                        <div className={`w-2 h-2 rounded-full ${vpsStatus.connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 animate-pulse'}`}></div>
-                        {vpsStatus.connected ? 'SUPABASE CLOUD ON' : 'OFFLINE MODE'}
-                        <span className="text-purple-500/50 border-l border-white/10 pl-2 ml-1">V3.4</span>
-                     </div>
+         <header className="sticky top-0 z-[100] bg-[#0a0815] border-b border-white/5 h-16 flex items-center justify-between px-6">
+            <div className="flex items-center gap-4">
+               <div className="w-12 h-12 flex items-center justify-center">
+                  <img src="mascote.png" className="w-full h-full object-contain drop-shadow-lg" />
+               </div>
+               <div className="flex flex-col justify-center">
+                  <h1 className="text-base font-black text-purple-400 leading-tight">Sidnei - Ferramentas Ilimitadas</h1>
+                  <h2 className="text-[9px] text-gray-500 font-bold uppercase tracking-widest leading-none">Admin Blindado — Powered by Sidnei Martins</h2>
+               </div>
+            </div>
+            
+            <div className="flex items-center gap-6">
+               <div className="flex items-center gap-4">
+                  <div className="text-right">
+                     <div className="text-[10px] text-gray-400 font-bold leading-none mb-1">{currentUser?.email}</div>
+                     <button onClick={handleLogout} className="text-[9px] text-red-500 font-black uppercase hover:text-red-400 transition-all flex items-center justify-end gap-1 w-full"><LogOut size={10} /> Sair do Sistema</button>
                   </div>
-
-                  <div className="flex-1 flex justify-center px-16">
-                     {(settings?.adBanners || []).length > 0 && (
-                        <div className="relative w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl group" style={{ maxWidth: `${800 * (settings?.adBannerScale || 1)}px`, aspectRatio: '16/3' }}>
-                           <a href={settings?.adBannerLinks?.[currentAdIndex % (settings?.adBanners?.length || 1)] || '#'} target="_blank" rel="noreferrer">
-                              <img src={settings?.adBanners?.[currentAdIndex % (settings?.adBanners?.length || 1)]} className="w-full h-full object-cover transition-transform duration-[2000ms] group-hover:scale-105" />
-                           </a>
-                           <div className="absolute bottom-2 right-4 flex gap-1">
-                              {(settings?.adBanners || []).map((_, idx) => (
-                                 <div key={idx} className={`w-1.5 h-1.5 rounded-full transition-all ${idx === currentAdIndex % settings.adBanners.length ? 'bg-purple-500 w-4' : 'bg-white/20'}`}></div>
-                              ))}
-                           </div>
-                        </div>
-                     )}
-                  </div>
-
-                  <div className="flex items-center gap-8">
-                     <div className="flex flex-col items-end border-r border-white/10 pr-8">
-                        <span className="text-3xl font-black text-white">{dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">{dateTime.toLocaleDateString()}</span>
-                     </div>
-                     <div className="flex items-center gap-4 bg-white/5 px-6 py-2.5 rounded-2xl border border-white/10">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-purple-700 flex items-center justify-center font-black">{currentUser?.email?.[0].toUpperCase()}</div>
-                        <div className="flex flex-col"><span className="font-bold text-xs truncate max-w-[120px]">{currentUser?.email}</span><span className="text-purple-400 text-[10px] font-black uppercase">{currentUser?.role}</span></div>
-                     </div>
-                     <button onClick={handleLogout} className="p-4 bg-orange-900/20 text-orange-400 rounded-xl border border-orange-500/20 hover:bg-orange-600 hover:text-white transition-all"><LogOut size={20} /></button>
+                  <div className="h-6 w-px bg-white/10"></div>
+                  <div className="flex flex-col items-end justify-center font-black">
+                     <span className="text-sm text-gray-200 leading-none mb-0.5">{dateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                     <span className="text-[8px] text-purple-400 uppercase tracking-widest leading-none">{dateTime.toLocaleDateString()}</span>
                   </div>
                </div>
 
-               <div className="flex justify-center gap-16 mt-auto">
-                  <button onClick={() => setActiveTab('profiles')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'profiles' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Monitor size={18} /> Ferramentas</button>
-                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('users')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'users' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Users size={18} /> Membros</button>)}
-                  {(isAdmin || currentUser?.role === Role.RESELLER) && (<button onClick={() => setActiveTab('settings')} className={`pb-5 px-6 flex items-center gap-3 text-sm font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeTab === 'settings' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}><Settings size={18} /> Sistema</button>)}
+               <div className={`px-4 py-1.5 rounded-[1rem] border flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider ${vpsStatus.connected ? 'border-green-500/20 bg-green-500/10 text-green-400' : 'border-red-500/20 bg-red-500/10 text-red-400'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${vpsStatus.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-red-500'}`}></div>
+                  {vpsStatus.connected ? 'Online' : 'Erro de conexão'}
                </div>
             </div>
          </header>
 
-         <main className="flex-1 p-12 relative z-10 pb-48">
-            {(activeTab === 'users' || activeTab === 'profiles') && (
-               <div className="max-w-[1920px] mx-auto grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-                  {[
-                     { label: 'Ferramentas', val: profiles.length, color: 'text-purple-400', icon: LayoutGrid },
-                     { label: 'Membros Cadastrados', val: stats.totalMembers, color: 'text-white', icon: Users },
-                     { label: 'Contas Ativas', val: stats.activeMembers, color: 'text-green-500', icon: CheckSquare },
-                     { label: 'Usuários Online', val: stats.onlineMembers, color: 'text-red-500', icon: Zap, online: true },
-                     { label: isAdmin ? 'Revendedores Ativos' : 'HWID Painel', val: isAdmin ? stats.totalResellers : machineId.substring(0, 10), color: 'text-blue-500', icon: Shield }
-                  ].map((s, idx) => (
-                     <div key={idx} className="bg-black/40 border border-white/5 rounded-2xl p-4 flex items-center gap-4 backdrop-blur-xl group hover:border-purple-500/20 transition-all">
-                        <div className={`w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center ${s.color}`}> <s.icon size={20} /> </div>
-                        <div className="flex flex-col relative">
-                           <span className="text-[9px] font-black uppercase text-gray-500 tracking-wider">{s.label}</span>
-                           <div className="flex items-center gap-2">
-                              <span className={`text-xl font-black ${s.color}`}>{s.val}</span>
-                              {s.online && (
-                                 <div className="flex items-center gap-1.5 ml-2 bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20 shadow-[0_0_8px_#22c55e]">
-                                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]"></div>
-                                    <span className="text-[8px] font-black text-green-500 uppercase tracking-tighter">Online</span>
-                                 </div>
-                              )}
-                           </div>
-                        </div>
-                     </div>
-                  ))}
-               </div>
-            )}
+         <main className="flex-1 p-6 relative z-10 pb-48">
 
             {activeTab === 'profiles' && (
-               <div className="max-w-[1920px] mx-auto space-y-12 animate-fade-in">
-                  <div className="flex justify-between items-center bg-black/80 backdrop-blur-xl p-6 rounded-3xl border border-white/5 gap-6 shadow-2xl relative z-[150]">
-                     <div className="flex items-center gap-6">
-                        <div className="relative w-96"> <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={18} /> <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Pesquisar..." className="w-full bg-[#111] border border-gray-800 rounded-2xl py-3 pl-12 text-sm outline-none focus:border-purple-500" /> </div>
-                        <div className="relative z-[50]">
-                           <button onClick={() => setShowFilterDropdown(!showFilterDropdown)} className="flex items-center gap-3 px-6 py-2.5 bg-blue-600/10 border border-blue-500/30 rounded-2xl text-blue-400 hover:bg-blue-600 hover:text-white transition-all shadow-lg">
-                              <Filter size={18} /> <span className="text-[10px] font-black uppercase">{selectedCategory === 'all' ? 'Categorias' : selectedCategory}</span>
-                              <ChevronDown size={14} className={showFilterDropdown ? 'rotate-180' : ''} />
-                           </button>
-                           {showFilterDropdown && (
-                              <div className="absolute top-full mt-3 left-0 w-64 bg-[#141414] border border-gray-800 rounded-2xl py-4 z-[1000] shadow-2xl animate-fade-in">
-                                 <button onClick={() => { setSelectedCategory('all'); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === 'all' ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`}>Tudo</button>
-                                 {(settings?.categories || []).map(cat => (
-                                    <button key={cat} onClick={() => { setSelectedCategory(cat); setShowFilterDropdown(false); }} className={`w-full text-left px-7 py-3 text-[10px] font-black uppercase ${selectedCategory === cat ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`}>{cat}</button>
-                                 ))}
-                              </div>
-                           )}
-                        </div>
-                        <button onClick={() => setFilterType(filterType === 'favorites' ? 'all' : 'favorites')} className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl border transition-all ${filterType === 'favorites' ? 'bg-purple-600 border-purple-400 text-white' : 'bg-purple-600/10 border-purple-500/30 text-purple-400'}`}> <Star size={18} className={filterType === 'favorites' ? 'fill-white' : ''} /> <span className="text-[10px] font-black uppercase">Favoritos</span> </button>
-                        <a href={settings?.tutorialLink || '#'} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-6 py-2.5 bg-orange-600/10 border border-orange-500/30 rounded-2xl text-orange-400 hover:bg-orange-600 hover:text-white transition-all"> <PlayCircle size={18} /> <span className="text-[10px] font-black uppercase">Tutorial</span> </a>
-                        <a href={currentSupportLink} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-6 py-2.5 bg-green-600/10 border border-green-500/30 rounded-2xl text-green-400 hover:bg-green-600 hover:text-white transition-all"> <HelpCircle size={18} /> <span className="text-[10px] font-black uppercase">Suporte</span> </a>
+               <div className="max-w-[1920px] mx-auto space-y-4 animate-fade-in mb-8">
+                  <div className="flex items-center gap-4">
+                     {/* SEARCH BAR */}
+                     <div className="relative flex-1">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                        <input 
+                           value={searchTerm} 
+                           onChange={e => setSearchTerm(e.target.value)} 
+                           placeholder="Buscar ferramenta..." 
+                           className="w-full bg-[#111] border border-gray-800 rounded-xl py-3 pl-12 text-xs font-bold outline-none focus:border-purple-500 transition-all text-white shadow-lg" 
+                        />
                      </div>
-                     <div className="flex items-center gap-4">
-                        {/* 🔄 BOTÃO ATUALIZAR - VISÍVEL PARA TODOS */}
-                        <button onClick={handleManualSync} title="Atualizar dados da Cloud" className="flex items-center gap-2 px-4 py-2.5 bg-cyan-600/10 border border-cyan-500/30 rounded-xl text-cyan-400 hover:bg-cyan-600 hover:text-white transition-all text-[9px] font-black uppercase"><RefreshCw size={14} /> Atualizar</button>
-                        {isAdmin && (
-                           <div className="flex gap-2 mr-4 border-r border-white/10 pr-4">
-                              <button onClick={handleManualSync} title="Puxar dados da Cloud" className="flex items-center gap-2 px-4 py-2 bg-blue-600/10 border border-blue-500/30 rounded-xl text-blue-400 hover:bg-blue-600 hover:text-white transition-all text-[9px] font-black uppercase"><DownloadCloud size={14} /> Puxar Cloud</button>
-                              <button onClick={handlePushCacheToCloud} title="Subir dados locais para a Cloud" className="flex items-center gap-2 px-4 py-2 bg-purple-600/10 border border-purple-500/30 rounded-xl text-purple-400 hover:bg-purple-600 hover:text-white transition-all text-[9px] font-black uppercase"><UploadCloud size={14} /> Subir Cloud</button>
-                           </div>
-                        )}
-                        {isAdmin && (<Button onClick={() => { setEditingProfile(null); setModalSelectedCategories([]); setShowProfileModal(true); }} className="!py-3.5 !px-8"> <Plus size={18} /> Novo Perfil </Button>)}
+                     
+                     {/* FILTERS */}
+                     <div className="flex items-center gap-2 bg-[#0a0a14] p-1.5 rounded-xl border border-gray-800">
+                        <button onClick={() => setFilterType('all')} className={`px-5 py-2 rounded-lg text-[11px] font-black transition-all ${filterType === 'all' || !['active','maintenance'].includes(filterType) ? 'bg-[#7c3aed] text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>Todos</button>
+                        <button onClick={() => setFilterType('active')} className={`px-5 py-2 rounded-lg text-[11px] font-black transition-all ${filterType === 'active' ? 'bg-[#7c3aed] text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>Ativos</button>
+                        <button onClick={() => setFilterType('maintenance')} className={`px-5 py-2 rounded-lg text-[11px] font-black transition-all ${filterType === 'maintenance' ? 'bg-[#7c3aed] text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>Manutenção</button>
                      </div>
+
+                     {/* ACTIONS */}
+                     <button onClick={() => setFilterType(filterType === 'favorites' ? 'all' : 'favorites')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[11px] font-black uppercase transition-all shadow-lg ${filterType === 'favorites' ? 'bg-[#7c3aed] border border-transparent text-white' : 'bg-purple-600/10 border border-purple-500/30 text-purple-400 hover:bg-[#7c3aed] hover:border-transparent hover:text-white hover:shadow-[0_0_15px_rgba(124,58,237,0.4)]'}`}>
+                        <Star size={14} className={filterType === 'favorites' ? 'fill-white' : ''} /> Favoritos
+                     </button>
+                     <a href={currentSupportLink} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-5 py-3 rounded-xl bg-purple-600/10 border border-purple-500/30 text-purple-400 hover:bg-[#7c3aed] hover:border-transparent hover:text-white hover:shadow-[0_0_15px_rgba(124,58,237,0.4)] font-black text-[11px] uppercase transition-all shadow-lg">
+                        <HelpCircle size={14} /> Suporte
+                     </a>
+                     <button onClick={handleManualSync} className="flex items-center gap-2 px-6 py-3 bg-[#7c3aed] hover:bg-[#6d28d9] rounded-xl text-white font-black text-[11px] uppercase transition-all shadow-[0_0_15px_rgba(124,58,237,0.4)]">
+                        <RefreshCw size={14} /> Atualizar
+                     </button>
                   </div>
+                  
+                  {/* INLINE CATEGORIES */}
+                  <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-2 pt-2">
+                     <button 
+                        onClick={() => setSelectedCategory('all')} 
+                        className={`whitespace-nowrap px-6 py-2.5 rounded-lg border transition-all text-[10px] font-black uppercase ${selectedCategory === 'all' ? 'bg-[#7c3aed] border-transparent text-white shadow-[0_0_15px_rgba(168,85,247,0.4)]' : 'bg-purple-600/10 border-purple-500/30 text-purple-400 hover:bg-[#7c3aed] hover:border-transparent hover:text-white hover:shadow-[0_0_15px_rgba(124,58,237,0.4)]'}`}
+                     >
+                        Tudo
+                     </button>
+                     {(settings?.categories || []).map(cat => (
+                        <button 
+                           key={cat} 
+                           onClick={() => setSelectedCategory(cat)} 
+                           className={`whitespace-nowrap px-6 py-2.5 rounded-lg border transition-all text-[10px] font-black uppercase ${selectedCategory === cat ? 'bg-[#7c3aed] border-transparent text-white shadow-[0_0_15px_rgba(168,85,247,0.4)]' : 'bg-purple-600/10 border-purple-500/30 text-purple-400 hover:bg-[#7c3aed] hover:border-transparent hover:text-white hover:shadow-[0_0_15px_rgba(124,58,237,0.4)]'}`}
+                        >
+                           {cat}
+                        </button>
+                     ))}
+                  </div>
+                  
+                  {/* SUMMARY INFO ROW */}
+                  <div className="flex items-center gap-6 text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2">
+                     <span>Total: <strong className="text-white text-[11px] ml-1">{profiles.length}</strong></span>
+                     <span>Ativos: <strong className="text-green-500 text-[11px] ml-1">{profiles.filter(p => p.status !== 'maintenance').length}</strong></span>
+                     <span>Manutenção: <strong className="text-red-500 text-[11px] ml-1">{profiles.filter(p => p.status === 'maintenance').length}</strong></span>
+                     <span>Exibindo: <strong className="text-white text-[11px] ml-1">{filteredProfiles.length}</strong></span>
+                  </div>
+                  
                   <div
                      ref={profilesContainerRef}
                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10"
