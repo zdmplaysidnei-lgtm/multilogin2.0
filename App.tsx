@@ -18,7 +18,7 @@ import { supabase } from './lib/supabase';
 import { Security } from './services/Security';
 import { Pagination } from './components/Pagination';
 
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 
 const isVersionOutdated = (current: string, min: string) => {
    if (!min) return false;
