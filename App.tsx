@@ -18,6 +18,19 @@ import { supabase } from './lib/supabase';
 import { Security } from './services/Security';
 import { Pagination } from './components/Pagination';
 
+const APP_VERSION = '3.5.0';
+
+const isVersionOutdated = (current: string, min: string) => {
+   if (!min) return false;
+   const c = current.split('.').map(Number);
+   const m = min.split('.').map(Number);
+   for (let i = 0; i < 3; i++) {
+      if ((c[i] || 0) < (m[i] || 0)) return true;
+      if ((c[i] || 0) > (m[i] || 0)) return false;
+   }
+   return false;
+};
+
 const App: React.FC = () => {
    const machineId = useMemo(() => {
       let id = localStorage.getItem('sidnei_hwid_v2');
@@ -1067,6 +1080,28 @@ const App: React.FC = () => {
       );
    }
 
+   if (!isAppLoading && settings?.latestVersion && isVersionOutdated(APP_VERSION, settings.latestVersion)) {
+      return (
+         <div className="min-h-screen flex items-center justify-center bg-[#050505] relative overflow-hidden">
+            <ParticleBackground effect={settings?.seasonalEffect} />
+            <div className="relative z-10 w-full max-w-md p-10 bg-black/80 border border-red-500/50 rounded-3xl shadow-2xl backdrop-blur-xl text-center animate-fade-in-up">
+               <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-6 animate-pulse" />
+               <h1 className="text-white text-2xl font-black mb-4 uppercase">Atualização Obrigatória</h1>
+               <p className="text-gray-400 text-sm mb-8">
+                  {settings?.updateMessage || "Sua versão do aplicativo expirou e não é mais suportada. Por favor, baixe a nova versão para continuar acessando suas ferramentas."}
+               </p>
+               {settings?.updateDownloadUrl ? (
+                  <Button onClick={() => window.open(settings.updateDownloadUrl, '_blank')} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4">
+                     BAIXAR NOVA VERSÃO
+                  </Button>
+               ) : (
+                  <p className="text-red-400 font-bold text-xs uppercase tracking-widest">Entre em contato com o suporte para receber o novo link.</p>
+               )}
+            </div>
+         </div>
+      );
+   }
+
    return (
       <div className="min-h-screen bg-[#050505] text-white flex flex-col font-sans overflow-y-auto custom-scrollbar relative">
          <ParticleBackground effect={settings?.seasonalEffect} />
@@ -1399,6 +1434,19 @@ const App: React.FC = () => {
                   {isAdmin && (
                      <>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                           <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl lg:col-span-2">
+                              <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-red-500"><DownloadCloud size={20} /> Sistema de Atualização Obrigatória</h3>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                 <div>
+                                    <Input label="Versão Mínima Permitida (ex: 3.5.0)" placeholder="Deixe em branco para não bloquear" value={localSettings.latestVersion || ''} onChange={e => setLocalSettings({ ...localSettings, latestVersion: e.target.value })} />
+                                    <p className="text-[10px] text-gray-500 mt-2">Clientes com versão abaixo desta verão a tela de bloqueio.</p>
+                                 </div>
+                                 <Input label="Link de Download da Nova Versão" placeholder="https://..." value={localSettings.updateDownloadUrl || ''} onChange={e => setLocalSettings({ ...localSettings, updateDownloadUrl: e.target.value })} />
+                                 <div className="md:col-span-2">
+                                    <Input label="Mensagem da Tela de Bloqueio" placeholder="Sua versão expirou..." value={localSettings.updateMessage || ''} onChange={e => setLocalSettings({ ...localSettings, updateMessage: e.target.value })} />
+                                 </div>
+                              </div>
+                           </div>
                            <div className="bg-[#111] border border-gray-800 rounded-[40px] p-10 space-y-8 shadow-2xl">
                               <h3 className="text-xl font-black uppercase flex items-center gap-4 border-b border-gray-800 pb-6 text-yellow-500"><KeyRound size={20} /> Credenciais & Senhas</h3>
                               <div className="space-y-6">
