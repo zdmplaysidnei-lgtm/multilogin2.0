@@ -1,0 +1,26 @@
+{
+  "name": "rateioflix-ferramentas",
+  "productName": "Sidnei - Ferramentas Ilimitadas",
+  "version": "3.4.0",
+  "private": true,
+  "main": "./electron/main.js",
+  "homepage": "./",
+  "description": "Sistema de multilogin avançado estilo Netflix",
+  "author": {
+    "name": "Sidnei - Ferramentas Ilimitadas",
+    "email": "rateioflix@example.com"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "adm-zip": "^0.5.16",
+    "axios": "^1.6.0",
+    "crypto-js": "^4.2.0",
+    "lucide-react": "^0.344.0",
+    "proxy-chain": "^2.7.1",
+    "puppeteer-core": "^22.0.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

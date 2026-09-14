@@ -591,7 +591,8 @@ const App: React.FC = () => {
             if (loginForm.remember) DataService.saveRememberMe(loginForm.email, loginForm.password); else DataService.clearRememberMe();
             const updated = { ...finalUser, isLoggedIn: true, currentMachineId: machineId };
 
-            await DataService.updateSingleUser(updated);
+            await DataService.updateSingleUser(updated); // Mantém para atualizar o cache local
+            await DataService.updateUserSession(finalUser.email, machineId, true); // Chama a RPC para furar o bloqueio do Supabase
             setCurrentUser(updated);
 
             setToast({ msg: `Sessão Liberada!`, type: 'success' });
@@ -618,7 +619,8 @@ const App: React.FC = () => {
    const handleLogout = async () => {
       if (currentUser) {
          const updated = { ...currentUser, isLoggedIn: false, currentMachineId: undefined };
-         await DataService.updateSingleUser(updated);
+         await DataService.updateSingleUser(updated); // Atualiza cache local
+         await DataService.updateUserSession(currentUser.email, null, false); // Chama RPC
          setUsers(users.map(u => u.id === currentUser.id ? updated : u));
       }
       setCurrentUser(null); setRunningProfiles([]); setActiveProfileId(null);
