@@ -630,14 +630,20 @@ const App: React.FC = () => {
    };
 
    const handleLogout = async () => {
-      if (currentUser) {
-         const updated = { ...currentUser, isLoggedIn: false, currentMachineId: undefined };
-         await DataService.updateSingleUser(updated); // Atualiza cache local
-         await DataService.updateUserSession(currentUser.email, null, false); // Chama RPC
-         setUsers(users.map(u => u.id === currentUser.id ? updated : u));
+      try {
+         setToast({ msg: 'Saindo do sistema...', type: 'info' });
+         if (currentUser) {
+            const updated = { ...currentUser, isLoggedIn: false, currentMachineId: undefined };
+            await DataService.updateSingleUser(updated); // Atualiza cache local
+            await DataService.updateUserSession(currentUser.email, null, false); // Chama RPC
+            setUsers(users.map(u => u.id === currentUser.id ? updated : u));
+         }
+      } catch (err) {
+         console.error('Logout error:', err);
+      } finally {
+         setCurrentUser(null); setRunningProfiles([]); setActiveProfileId(null);
+         hasAutoShownAnnouncement.current = false;
       }
-      setCurrentUser(null); setRunningProfiles([]); setActiveProfileId(null);
-      hasAutoShownAnnouncement.current = false;
    };
 
    const handleLaunchProfile = async (profile: Profile) => {
