@@ -18,7 +18,7 @@ import { supabase } from './lib/supabase';
 import { Security } from './services/Security';
 import { Pagination } from './components/Pagination';
 
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.7.0';
 
 const isVersionOutdated = (current: string, min: string) => {
    if (!min) return false;
@@ -1112,7 +1112,7 @@ const App: React.FC = () => {
                   <img src="mascote.png" className="w-full h-full object-contain drop-shadow-lg" />
                </div>
                <div className="flex flex-col justify-center">
-                  <h1 className="text-base font-black text-purple-400 leading-tight">Sidnei - Ferramentas Ilimitadas</h1>
+                  <h1 className="text-base font-black text-purple-400 leading-tight flex items-center gap-2">Sidnei - Ferramentas Ilimitadas <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30 tracking-widest font-bold">V3.7.0</span></h1>
                   <h2 className="text-[9px] text-gray-500 font-bold uppercase tracking-widest leading-none">Admin Blindado — Powered by Sidnei Martins</h2>
                </div>
             </div>
