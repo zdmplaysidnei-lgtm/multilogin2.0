@@ -338,6 +338,24 @@ export const DataService = {
     }
   },
 
+  updateUserSession: async (email: string, machineId: string | null, isLoggedIn: boolean): Promise<boolean> => {
+    try {
+      const { error } = await supabase.rpc('update_user_session', { 
+        p_email: email, 
+        p_machine_id: machineId, 
+        p_is_logged_in: isLoggedIn 
+      });
+      if (error) {
+        console.error("Erro updateUserSession RPC:", error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("Exception updateUserSession:", e);
+      return false;
+    }
+  },
+
   ping: async () => {
     const start = Date.now();
     try {
