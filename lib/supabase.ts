@@ -7,9 +7,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_slrAzZ8RLnDIwaeERExJxQ_ou8prAN9';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   global: {
-    headers: {
-      'x-app-version': '3.7.0'
-    },
+    // headers customizados removidos para evitar bloqueio de CORS
     fetch: (url, options) => {
       // Usar apenas a opção nativa do fetch para evitar cache.
       // Parâmetros na URL (como _cb) quebram o PostgREST (erro PGRST100).
