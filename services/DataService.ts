@@ -53,7 +53,7 @@ const detectUserColumns = async (): Promise<string[]> => {
   if (knownUserColumns) return knownUserColumns;
 
   try {
-    const { data, error } = await supabase.from('users').select('*').limit(1);
+    const { data, error } = await supabase.from('membros_v3').select('*').limit(1);
     if (!error && data && data.length > 0) {
       knownUserColumns = Object.keys(data[0]);
       console.log('📋 Colunas detectadas na tabela users:', knownUserColumns.join(', '));
@@ -469,7 +469,7 @@ export const DataService = {
          
       // Se não atualizou nenhuma linha (perfil novo) ou deu erro, tenta inserir
       if (updateError || !data || data.length === 0) {
-         const { error: insertError } = await supabase.from('profiles').insert([sanitized]);
+         const { error: insertError } = await supabase.from('ferramentas_v3').insert([sanitized]);
          if (insertError) {
             console.error('Insert single profile error:', insertError);
             return false;
@@ -588,11 +588,11 @@ export const DataService = {
 
   deleteUser: async (userId: string): Promise<boolean> => {
     try {
-      const { data, error } = await supabase.from('users').delete().eq('id', userId).select();
+      const { data, error } = await supabase.from('membros_v3').delete().eq('id', userId).select();
 
       if (!error && (!data || data.length === 0)) {
         console.warn('⚠️ RLS bloqueou o DELETE de user! Tentando Soft-Delete via UPDATE...');
-        const { error: updateErr } = await supabase.from('users').update({ password: '__DELETED__', blocked: true }).eq('id', userId);
+        const { error: updateErr } = await supabase.from('membros_v3').update({ password: '__DELETED__', blocked: true }).eq('id', userId);
         if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
       } else if (error) {
         throw error;
@@ -622,7 +622,7 @@ export const DataService = {
 
   deleteAllMembers: async (): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('users').delete().eq('role', Role.MEMBER);
+      const { error } = await supabase.from('membros_v3').delete().eq('role', Role.MEMBER);
 
       if (!error && memoryCache.users) {
         memoryCache.users = memoryCache.users.filter(u => u.role !== Role.MEMBER);
@@ -638,11 +638,11 @@ export const DataService = {
 
   deleteProfile: async (profileId: string): Promise<boolean> => {
     try {
-      const { data, error } = await supabase.from('profiles').delete().eq('id', profileId).select();
+      const { data, error } = await supabase.from('ferramentas_v3').delete().eq('id', profileId).select();
 
       if (!error && (!data || data.length === 0)) {
         console.warn('⚠️ RLS bloqueou o DELETE de perfil! Tentando Soft-Delete via UPDATE...');
-        const { error: updateErr } = await supabase.from('profiles').update({ name: '__DELETED__' }).eq('id', profileId);
+        const { error: updateErr } = await supabase.from('ferramentas_v3').update({ name: '__DELETED__' }).eq('id', profileId);
         if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
       } else if (error) {
         throw error;

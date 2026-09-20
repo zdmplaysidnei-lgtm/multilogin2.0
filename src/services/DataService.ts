@@ -23,8 +23,8 @@ export const DataService = {
     try {
       console.log("🔥 BUSCANDO PERFIS OTIMIZADOS DO SUPABASE 🔥");
       const [uRes, pRes, sRes] = await Promise.all([
-        supabase.from('users').select('*'),
-        supabase.from('profiles').select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at').order('orderIndex', { ascending: true }),
+        supabase.from('membros_v3').select('*'),
+        supabase.from('ferramentas_v3').select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at').order('orderIndex', { ascending: true }),
         supabase.from('settings').select('config').single()
       ]);
 
@@ -66,7 +66,7 @@ export const DataService = {
       const chunkSize = 200;
       for (let i = 0; i < sanitized.length; i += chunkSize) {
         const chunk = sanitized.slice(i, i + chunkSize);
-        const { error } = await supabase.from('users').upsert(chunk, { onConflict: 'id' });
+        const { error } = await supabase.from('membros_v3').upsert(chunk, { onConflict: 'id' });
         if (error) {
           console.error("Erro no chunk users:", error.message);
           return false;
@@ -86,7 +86,7 @@ export const DataService = {
       for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
         const batch = profiles.slice(i, i + BATCH_SIZE);
         const sanitized = batch.map(p => cleanForSupabase(p));
-        const { error } = await supabase.from('profiles').upsert(sanitized, { onConflict: 'id' });
+        const { error } = await supabase.from('ferramentas_v3').upsert(sanitized, { onConflict: 'id' });
         if (error) {
           console.error("Erro Supabase batch:", error.message);
           return false;
@@ -112,7 +112,7 @@ export const DataService = {
           return false;
         }
       } else {
-        const { error } = await supabase.from('profiles').upsert([sanitized], { onConflict: 'id' });
+        const { error } = await supabase.from('ferramentas_v3').upsert([sanitized], { onConflict: 'id' });
         if (error) {
           console.error("Erro upsert single:", error.message);
           return false;
@@ -139,7 +139,7 @@ export const DataService = {
   // Fix: Added missing deleteUser method
   deleteUser: async (userId: string): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('users').delete().eq('id', userId);
+      const { error } = await supabase.from('membros_v3').delete().eq('id', userId);
       if (error) return false;
       const current = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
       localStorage.setItem('nebula_users_v1', Security.encrypt(current.filter((u: any) => u.id !== userId)));
@@ -159,10 +159,10 @@ export const DataService = {
         }
       } else {
         // Tenta deletar direto
-        const { error } = await supabase.from('profiles').delete().eq('id', profileId);
+        const { error } = await supabase.from('ferramentas_v3').delete().eq('id', profileId);
         if (error) {
           // Fallback: soft-delete renomeando para __DELETED__
-          const { error: softErr } = await supabase.from('profiles').update({ name: '__DELETED__' }).eq('id', profileId);
+          const { error: softErr } = await supabase.from('ferramentas_v3').update({ name: '__DELETED__' }).eq('id', profileId);
           if (softErr) return false;
         }
       }
@@ -188,7 +188,7 @@ export const DataService = {
   updateSingleUser: async (user: User): Promise<boolean> => {
     try {
       const sanitized = cleanForSupabase(user);
-      const { error } = await supabase.from('users').upsert(sanitized, { onConflict: 'id' });
+      const { error } = await supabase.from('membros_v3').upsert(sanitized, { onConflict: 'id' });
       if (error) return false;
       const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
       const updated = cached.map((u: User) => u.id === user.id ? user : u);
@@ -219,7 +219,7 @@ export const DataService = {
   updateSingleProfile: async (profileId: string, updates: Partial<Profile>): Promise<boolean> => {
     try {
       const sanitized = cleanForSupabase(updates);
-      const { error } = await supabase.from('profiles').update(sanitized).eq('id', profileId);
+      const { error } = await supabase.from('ferramentas_v3').update(sanitized).eq('id', profileId);
       if (error) return false;
       const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
       const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, ...updates } : p);
@@ -230,7 +230,7 @@ export const DataService = {
 
   updateProfileSessionData: async (profileId: string, sessionData: any): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('profiles').update({ cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' }).eq('id', profileId);
+      const { error } = await supabase.from('ferramentas_v3').update({ cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' }).eq('id', profileId);
       if (error) return false;
       const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
       const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' } : p);
@@ -241,7 +241,7 @@ export const DataService = {
 
   getProfileSessionData: async (profileId: string): Promise<any> => {
     try {
-      const { data, error } = await supabase.from('profiles').select('cookies, localStorage').eq('id', profileId).single();
+      const { data, error } = await supabase.from('ferramentas_v3').select('cookies, localStorage').eq('id', profileId).single();
       if (error || !data) return null;
       return data;
     } catch (e) { return null; }
@@ -249,7 +249,7 @@ export const DataService = {
 
   deleteAllMembers: async (): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('users').delete().eq('role', 'MEMBER');
+      const { error } = await supabase.from('membros_v3').delete().eq('role', 'MEMBER');
       if (error) return false;
       const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
       const updated = cached.filter((u: User) => u.role !== 'MEMBER');

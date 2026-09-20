@@ -391,7 +391,7 @@ const App: React.FC = () => {
          let allUsers = [];
          let page = 0;
          while (true) {
-            const uRes = await supabase.from('users').select('*').range(page * 1000, (page + 1) * 1000 - 1);
+            const uRes = await supabase.from('membros_v3').select('*').range(page * 1000, (page + 1) * 1000 - 1);
             if (uRes.error) {
                console.error('[refreshData] Erro paginação users:', uRes.error.message);
                break;
@@ -452,7 +452,7 @@ const App: React.FC = () => {
                    .on('postgres_changes', { 
                          event: 'UPDATE', 
                          schema: 'public', 
-                         table: 'users'
+                         table: 'membros_v3'
                    }, (payload) => {
                                // 🔥 OTIMIZAÇÃO: Atualiza apenas o user específico no estado
                                setUsers(prev => prev.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u));
@@ -460,7 +460,7 @@ const App: React.FC = () => {
                    .on('postgres_changes', { 
                          event: 'INSERT', 
                          schema: 'public', 
-                         table: 'users' 
+                         table: 'membros_v3' 
                    }, () => {
                          // 🔥 OTIMIZAÇÃO: Apenas admins precisam refetch completo
                          // // if (currentUser.role === Role.ADMIN) refreshData(); // COMENTADO PARA EVITAR DDOS // COMENTADO PARA EVITAR DDOS
@@ -468,7 +468,7 @@ const App: React.FC = () => {
                    .on('postgres_changes', { 
                          event: 'DELETE', 
                          schema: 'public', 
-                         table: 'users' 
+                         table: 'membros_v3' 
                    }, (payload) => {
                          // 🔥 OTIMIZAÇÃO: Remove do estado local sem refetch
                          setUsers(prev => prev.filter(u => u.id !== payload.old.id));
@@ -560,7 +560,7 @@ const App: React.FC = () => {
       }
 
       // 🔥 BUSCA NO SUPABASE COM TRATAMENTO DE ERRO CORRETO
-      const { data: user, error: loginError } = await supabase.from('users').select('*').eq('email', emailInput).single();
+      const { data: user, error: loginError } = await supabase.from('membros_v3').select('*').eq('email', emailInput).single();
 
       // 🔥 FALLBACK: Se Supabase falhou (rede instável), tenta encontrar no cache local
       let finalUser = user;
@@ -923,7 +923,7 @@ const App: React.FC = () => {
             const result = await window.nebulaAPI.captureInternalSessionSilent(p.id, p.urls[0]);
             if (result.status === 'success') {
                const cookiesStr = JSON.stringify(result.cookies || []);
-               await supabase.from('profiles').update({
+               await supabase.from('ferramentas_v3').update({
                   cookies: cookiesStr,
                   localStorage: result.localStorage || "{}",
                   session_updated_at: new Date().toISOString()
@@ -1873,14 +1873,14 @@ Deno.serve(async (req) => {
     const blockingEvents = ['PURCHASE_CANCELED', 'PURCHASE_REFUNDED', 'REFUNDED', 'SUBSCRIPTION_CANCELLED', 'SUBSCRIPTION_CANCELLATION', 'CHARGEBACK', 'PURCHASE_EXPIRED', 'PURCHASE_PROTEST', 'PROTEST', 'DISPUTE_OPENED', 'CANCELLED']
 
     if (activationEvents.includes(event)) {
-      const { data: user } = await supabase.from('users').select('*').eq('email', email).single()
+      const { data: user } = await supabase.from('membros_v3').select('*').eq('email', email).single()
       const newExp = Date.now() + (30 * 24 * 60 * 60 * 1000);
 
       if (user) {
-        await supabase.from('users').update({ blocked: false, expirationDate: newExp }).eq('email', email)
+        await supabase.from('membros_v3').update({ blocked: false, expirationDate: newExp }).eq('email', email)
         statusMsg = "REATIVADO ✅"
       } else {
-        await supabase.from('users').insert({
+        await supabase.from('membros_v3').insert({
           id: 'h_' + Math.random().toString(36).substring(2, 10),
           email, password: "membro123", role: "MEMBER", blocked: false, createdAt: Date.now(), expirationDate: newExp, ownerId: "ADMIN"
         })
@@ -1888,7 +1888,7 @@ Deno.serve(async (req) => {
       }
     } 
     else if (blockingEvents.includes(event)) {
-      await supabase.from('users').update({ blocked: true, isLoggedIn: false, currentMachineId: null }).eq('email', email)
+      await supabase.from('membros_v3').update({ blocked: true, isLoggedIn: false, currentMachineId: null }).eq('email', email)
       statusMsg = (event.includes('PROTEST') || event.includes('CHARGE')) ? "EXPULSO POR PROTESTO 🚨" : "BLOQUEADO (REEMBOLSO/FIM)";
     }
 
@@ -1929,14 +1929,14 @@ Deno.serve(async (req) => {
     const blockingEvents = ['PURCHASE_CANCELED', 'PURCHASE_REFUNDED', 'REFUNDED', 'SUBSCRIPTION_CANCELLED', 'SUBSCRIPTION_CANCELLATION', 'CHARGEBACK', 'PURCHASE_EXPIRED', 'PURCHASE_PROTEST', 'PROTEST', 'DISPUTE_OPENED', 'CANCELLED']
 
     if (activationEvents.includes(event)) {
-      const { data: user } = await supabase.from('users').select('*').eq('email', email).single()
+      const { data: user } = await supabase.from('membros_v3').select('*').eq('email', email).single()
       const newExp = Date.now() + (30 * 24 * 60 * 60 * 1000);
 
       if (user) {
-        await supabase.from('users').update({ blocked: false, expirationDate: newExp }).eq('email', email)
+        await supabase.from('membros_v3').update({ blocked: false, expirationDate: newExp }).eq('email', email)
         statusMsg = "REATIVADO ✅"
       } else {
-        await supabase.from('users').insert({
+        await supabase.from('membros_v3').insert({
           id: 'h_' + Math.random().toString(36).substring(2, 10),
           email, password: "membro123", role: "MEMBER", blocked: false, createdAt: Date.now(), expirationDate: newExp, ownerId: "ADMIN"
         })
@@ -1944,7 +1944,7 @@ Deno.serve(async (req) => {
       }
     } 
     else if (blockingEvents.includes(event)) {
-      await supabase.from('users').update({ blocked: true, isLoggedIn: false, currentMachineId: null }).eq('email', email)
+      await supabase.from('membros_v3').update({ blocked: true, isLoggedIn: false, currentMachineId: null }).eq('email', email)
       statusMsg = (event.includes('PROTEST') || event.includes('CHARGE')) ? "EXPULSO POR PROTESTO 🚨" : "BLOQUEADO (REEMBOLSO/FIM)";
     }
 
@@ -2055,7 +2055,7 @@ Deno.serve(async (req) => {
                   const chunkSize = 100;
                   for (let i = 0; i < deltaToUpsert.length; i += chunkSize) {
                      const chunk = deltaToUpsert.slice(i, i + chunkSize);
-                     const { error } = await supabase.from('users').upsert(chunk, { onConflict: 'id' });
+                     const { error } = await supabase.from('membros_v3').upsert(chunk, { onConflict: 'id' });
                      if (error) {
                         console.error("Erro no chunk do importador:", error);
                         allSuccess = false;
