@@ -1071,7 +1071,7 @@ const App: React.FC = () => {
                   <Button className="w-full py-4 text-lg font-bold" type="submit" disabled={isSaving}>ENTRAR NO PAINEL</Button>
                   <p className="text-[10px] text-gray-500 text-center mt-4 uppercase font-bold tracking-widest flex flex-col gap-1">
                      <span>💖 Desenvolvido por Sidnei - Ferramentas Ilimitadas</span>
-                     <span className="text-purple-500/50">VERSÃO 3.0</span>
+                     <span className="text-purple-500/50">VERSÃO 3.7.0</span>
                   </p>
                </form>
             </div>
