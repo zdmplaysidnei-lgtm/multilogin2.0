@@ -370,7 +370,7 @@ const App: React.FC = () => {
       // --- PERFIS ---
       try {
          const pRes = await supabase
-            .from('profiles')
+            .from('ferramentas_v3')
             .select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at')
             .order('orderIndex', { ascending: true });
 
@@ -649,7 +649,7 @@ const App: React.FC = () => {
       
       try {
          const { data: fullProfileData, error: fetchErr } = await supabase
-            .from('profiles')
+            .from('ferramentas_v3')
             .select('cookies, localStorage, automationScript')
             .eq('id', profile.id)
             .single();
@@ -1212,7 +1212,7 @@ const App: React.FC = () => {
                               setToast({ msg: 'Carregando dados completos do perfil...', type: 'info' });
                               try {
                                  const { data: fullData, error } = await supabase
-                                    .from('profiles')
+                                    .from('ferramentas_v3')
                                     .select('cookies, localStorage, automationScript')
                                     .eq('id', prof.id)
                                     .single();
