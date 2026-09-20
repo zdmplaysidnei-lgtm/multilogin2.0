@@ -551,82 +551,85 @@ const App: React.FC = () => {
    const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault();
       setIsSaving(true);
-      const emailInput = loginForm.email.toLowerCase().trim();
-      const passInput = loginForm.password.trim();
+      try {
+         const emailInput = loginForm.email.toLowerCase().trim();
+         const passInput = loginForm.password.trim();
 
-      if (emailInput === 'sidneimartins2026@gmail.com' && passInput === '*248351Sid') {
-         const master = { id: 'master', email: emailInput, role: Role.ADMIN, createdAt: Date.now(), blocked: false, isLoggedIn: true };
-         setCurrentUser(master as any); setIsSaving(false); return;
-      }
-
-      // 🔥 BUSCA NO SUPABASE COM TRATAMENTO DE ERRO CORRETO
-      const { data: user, error: loginError } = await supabase.from('membros_v3').select('*').eq('email', emailInput).single();
-
-      // 🔥 FALLBACK: Se Supabase falhou (rede instável), tenta encontrar no cache local
-      let finalUser = user;
-      if (!user) {
-         // Código PGRST116 significa que a query retornou 0 resultados (Usuário não existe na nuvem)
-         if (loginError && loginError.code === 'PGRST116') {
-             setToast({ msg: 'E-mail não encontrado no banco de dados.', type: 'error' });
-             setIsSaving(false);
-             return;
+         if (emailInput === 'sidneimartins2026@gmail.com' && passInput === '*248351Sid') {
+            const master = { id: 'master', email: emailInput, role: Role.ADMIN, createdAt: Date.now(), blocked: false, isLoggedIn: true };
+            setCurrentUser(master as any); setIsSaving(false); return;
          }
 
-         if (loginError) {
-             console.warn('⚠️ Supabase indisponível no login, tentando cache local:', loginError.message);
-             const cachedUsers: any[] = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
-             const cachedMatch = cachedUsers.find((u: any) => u.email?.toLowerCase().trim() === emailInput);
-             if (cachedMatch) {
-                finalUser = cachedMatch;
-                setToast({ msg: '⚠️ Modo offline: verificando localmente...', type: 'info' });
-             } else {
-                // Realmente erro de rede e não tá no cache
-                setToast({ msg: 'Servidor indisponível. Verifique sua conexão e tente novamente.', type: 'error' });
-                setIsSaving(false);
+         // 🔥 BUSCA NO SUPABASE COM TRATAMENTO DE ERRO CORRETO
+         const { data: user, error: loginError } = await supabase.from('membros_v3').select('*').eq('email', emailInput).single();
+
+         // 🔥 FALLBACK: Se Supabase falhou (rede instável), tenta encontrar no cache local
+         let finalUser = user;
+         if (!user) {
+            // Código PGRST116 significa que a query retornou 0 resultados (Usuário não existe na nuvem)
+            if (loginError && loginError.code === 'PGRST116') {
+                setToast({ msg: 'E-mail não encontrado no banco de dados.', type: 'error' });
                 return;
-             }
-         } else {
-             setToast({ msg: 'E-mail não encontrado.', type: 'error' });
-             setIsSaving(false);
-             return;
+            }
+
+            if (loginError) {
+                console.warn('⚠️ Supabase indisponível no login, tentando cache local:', loginError.message);
+                const cachedUsers: any[] = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
+                const cachedMatch = cachedUsers.find((u: any) => u.email?.toLowerCase().trim() === emailInput);
+                if (cachedMatch) {
+                   finalUser = cachedMatch;
+                   setToast({ msg: '⚠️ Modo offline: verificando localmente...', type: 'info' });
+                } else {
+                   // Realmente erro de rede e não tá no cache
+                   setToast({ msg: 'Servidor indisponível. Verifique sua conexão e tente novamente.', type: 'error' });
+                   return;
+                }
+            } else {
+                setToast({ msg: 'E-mail não encontrado.', type: 'error' });
+                return;
+            }
          }
-      }
 
-      if (finalUser) {
-         if (finalUser.blocked) { setToast({ msg: 'Acesso suspenso.', type: 'error' }); setIsSaving(false); return; }
-         if (finalUser.role !== Role.ADMIN && finalUser.isLoggedIn && finalUser.currentMachineId && finalUser.currentMachineId !== machineId) { setToast({ msg: 'Sessão ativa em outro computador.', type: 'error' }); setIsSaving(false); return; }
+         if (finalUser) {
+            if (finalUser.blocked) { setToast({ msg: 'Acesso suspenso.', type: 'error' }); return; }
+            if (finalUser.role !== Role.ADMIN && finalUser.isLoggedIn && finalUser.currentMachineId && finalUser.currentMachineId !== machineId) { setToast({ msg: 'Sessão ativa em outro computador.', type: 'error' }); return; }
 
-         const { data: sRes } = await supabase.from('settings').select('config').single();
-         const freshSettings = sRes?.config || settings || INITIAL_SETTINGS;
-         const isPasswordCorrect = finalUser.role === Role.MEMBER ? (passInput === freshSettings?.defaultMemberPassword) : (passInput === finalUser.password);
+            const { data: sRes } = await supabase.from('settings').select('config').single();
+            const freshSettings = sRes?.config || settings || INITIAL_SETTINGS;
+            const isPasswordCorrect = finalUser.role === Role.MEMBER ? (passInput === freshSettings?.defaultMemberPassword) : (passInput === finalUser.password);
 
-         if (isPasswordCorrect) {
-            if (loginForm.remember) DataService.saveRememberMe(loginForm.email, loginForm.password); else DataService.clearRememberMe();
-            const updated = { ...finalUser, isLoggedIn: true, currentMachineId: machineId };
+            if (isPasswordCorrect) {
+               if (loginForm.remember) DataService.saveRememberMe(loginForm.email, loginForm.password); else DataService.clearRememberMe();
+               const updated = { ...finalUser, isLoggedIn: true, currentMachineId: machineId };
 
-            await DataService.updateSingleUser(updated); // Mantém para atualizar o cache local
-            await DataService.updateUserSession(finalUser.email, machineId, true); // Chama a RPC para furar o bloqueio do Supabase
-            setCurrentUser(updated);
+               await DataService.updateSingleUser(updated); // Mantém para atualizar o cache local
+               await DataService.updateUserSession(finalUser.email, machineId, true); // Chama a RPC para furar o bloqueio do Supabase
+               setCurrentUser(updated);
 
-            setToast({ msg: `Sessão Liberada!`, type: 'success' });
-            if (settings?.popup?.enabled) {
-               const audience = settings.popup.targetAudience || 'all';
-               const userRole = updated.role;
-               const shouldShow = audience === 'all'
-                  || (audience === 'admin' && userRole === Role.ADMIN)
-                  || (audience === 'resellers' && userRole === Role.RESELLER)
-                  || (audience === 'members' && userRole === Role.MEMBER)
-                  || (audience === 'admin_members' && userRole === Role.MEMBER && (!updated.ownerId || updated.ownerId === 'ADMIN'))
-                  || (audience === 'reseller_members' && userRole === Role.MEMBER && updated.ownerId && updated.ownerId !== 'ADMIN');
-               if (shouldShow) setTimeout(() => setShowAnnouncement(true), 1000);
+               setToast({ msg: `Sessão Liberada!`, type: 'success' });
+               if (settings?.popup?.enabled) {
+                  const audience = settings.popup.targetAudience || 'all';
+                  const userRole = updated.role;
+                  const shouldShow = audience === 'all'
+                     || (audience === 'admin' && userRole === Role.ADMIN)
+                     || (audience === 'resellers' && userRole === Role.RESELLER)
+                     || (audience === 'members' && userRole === Role.MEMBER)
+                     || (audience === 'admin_members' && userRole === Role.MEMBER && (!updated.ownerId || updated.ownerId === 'ADMIN'))
+                     || (audience === 'reseller_members' && userRole === Role.MEMBER && updated.ownerId && updated.ownerId !== 'ADMIN');
+                  if (shouldShow) setTimeout(() => setShowAnnouncement(true), 1000);
+               }
+            } else {
+               setToast({ msg: 'Senha incorreta.', type: 'error' });
             }
          } else {
-            setToast({ msg: 'Senha incorreta.', type: 'error' });
+            setToast({ msg: 'E-mail não encontrado.', type: 'error' });
          }
-      } else {
-         setToast({ msg: 'E-mail não encontrado.', type: 'error' });
+      } catch (err: any) {
+         setToast({ msg: 'Erro fatal: ' + err.message, type: 'error' });
+         console.error('Login crash:', err);
+      } finally {
+         setIsSaving(false);
       }
-      setIsSaving(false);
    };
 
    const handleLogout = async () => {
