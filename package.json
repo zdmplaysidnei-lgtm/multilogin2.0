@@ -1,7 +1,7 @@
 {
   "name": "multilogin-master",
   "productName": "Sidnei - Ferramentas Ilimitadas",
-  "version": "3.7.0",
+  "version": "3.7.1",
   "private": true,
   "main": "./electron/main.js",
   "homepage": "./",
