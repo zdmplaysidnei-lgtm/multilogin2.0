@@ -4416,6 +4416,16 @@ function createMainWindow() {
 
 // 📥 GLOBAL DOWNLOAD MONITOR — Captura downloads do APP e TODOS OS PERFIS INTERNOS (WebViews)
 app.on('session-created', (ses) => {
+    // Intercepta e adiciona headers corretos para downloads do Suno bypassando o bloqueio
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        const url = details.url || '';
+        if (url.includes('cdn1.suno.') || url.includes('cdn2.suno.') || url.includes('suno.ai') || url.includes('suno.com')) {
+            details.requestHeaders['Referer'] = 'https://suno.com/';
+            details.requestHeaders['Origin'] = 'https://suno.com';
+        }
+        callback({ requestHeaders: details.requestHeaders });
+    });
+
     ses.on('will-download', (event, item) => {
         const fileName = item.getFilename();
         const totalBytes = item.getTotalBytes();
