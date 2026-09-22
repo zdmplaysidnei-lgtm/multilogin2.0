@@ -661,6 +661,12 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         e.preventDefault();
         (window as any).nebulaAPI?.openPopup(e.url, "persist:" + profile.id, profile.customCSS);
       });
+      webview.addEventListener('page-title-updated', (e: any) => {
+        if (e.title && e.title.startsWith('DOWNLOAD_REQUEST_URL:')) {
+          const dlUrl = e.title.replace('DOWNLOAD_REQUEST_URL:', '');
+          (webview as any).downloadURL(dlUrl);
+        }
+      });
     });
 
   }, [profile.id, isReadyToNavigate, autoFillEnabled, blockedUrls, profile.discordToken, profile.automationScript, activeTabIndex]);
