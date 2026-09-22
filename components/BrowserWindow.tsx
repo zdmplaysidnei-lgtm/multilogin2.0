@@ -285,6 +285,14 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
     }
   };
 
+  useEffect(() => {
+    if (profile.customCSS) {
+      try {
+        (window as any).nebulaAPI?.registerCss("persist:" + profile.id, profile.customCSS);
+      } catch (e) {}
+    }
+  }, [profile.id, profile.customCSS]);
+
   const closeSearch = () => {
     const activeWebview = webviewRefs.current[activeTabIndex];
     if (activeWebview) activeWebview.stopFindInPage('clearSelection');
@@ -648,6 +656,10 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           setIsLoading(false);
           performCloudSync();
         }
+      });
+      webview.addEventListener('new-window', (e: any) => {
+        e.preventDefault();
+        (window as any).nebulaAPI?.openPopup(e.url, "persist:" + profile.id, profile.customCSS);
       });
     });
 

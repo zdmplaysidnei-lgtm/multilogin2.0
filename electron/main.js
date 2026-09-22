@@ -20,6 +20,29 @@ puppeteer.use(StealthPlugin());
 // Aumenta o limite de listeners para evitar avisos em perfis com muitas abas
 process.setMaxListeners(0);
 
+const profileCSSMap = new Map();
+
+ipcMain.on('register-css', (e, { partition, customCSS }) => {
+    if (customCSS && customCSS.trim()) {
+        profileCSSMap.set(partition, customCSS);
+    }
+});
+
+app.on('web-contents-created', (event, contents) => {
+    contents.on('did-finish-load', async () => {
+        try {
+            for (const [partition, css] of profileCSSMap.entries()) {
+                const sess = session.fromPartition(partition);
+                if (contents.session === sess && css) {
+                    await contents.insertCSS(css);
+                }
+            }
+        } catch (e) {
+            console.error('Erro ao injetar CSS global:', e);
+        }
+    });
+});
+
 // 🔥 CORREÇÃO: Remover AutomationControlled global que causa barra amarela
 if (app && app.commandLine) {
     app.commandLine.appendSwitch('no-sandbox');
@@ -667,8 +690,25 @@ function createFloatingButtons(profileId) {
 }
 
 // 🔥 FUNÇÃO DE PROTEÇÃO PARA SER INJETADA NO NAVEGADOR
-async function injectProtection(targetPage) {
+async function injectProtection(targetPage, customCSS = '') {
     try {
+        if (customCSS && customCSS.trim() !== '') {
+            await targetPage.evaluateOnNewDocument((css) => {
+                window.addEventListener('DOMContentLoaded', () => {
+                    if (document.getElementById('custom-css-injected')) return;
+                    const style = document.createElement('style');
+                    style.id = 'custom-css-injected';
+                    style.textContent = css;
+                    document.head.appendChild(style);
+                });
+            }, customCSS);
+        }
+
+        targetPage.on('popup', async (popupPage) => {
+            console.log('🪟 [POPUP] Nova janela popup detectada!');
+            await injectProtection(popupPage, customCSS);
+        });
+
         // 🔥 LISTENER INTELIGENTE: Intercepta payloads de sessão e injeta cookies via CDP
         targetPage.on('console', async (msg) => {
             const text = msg.text();
@@ -678,7 +718,7 @@ async function injectProtection(targetPage) {
             if (text.startsWith('__RTZ_TARGET__:')) {
                 // Salva a URL de destino
                 targetPage.__rtzTargetUrl = text.replace('__RTZ_TARGET__:', '').trim();
-                console.log('🎯 [TARGET] URL de destino salva:', targetPage.__rtzTargetUrl);
+                console.log('🔗 [TARGET] URL de destino salva:', targetPage.__rtzTargetUrl);
             }
 
             if (text.startsWith('__RTZ_SESSION__:')) {
@@ -2972,7 +3012,7 @@ function registerIPCHandlers() {
             }
 
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
-            await injectProtection(page);
+            await injectProtection(page, profile.customCSS);
 
             // PROTEÇÃO GLOBAL: Novas abas recebem proteção + auto-fill
             // Mantemos no mesmo Chrome para preservar autenticação e extensão Rocketoolz
@@ -2981,7 +3021,7 @@ function registerIPCHandlers() {
                     try {
                         const newPage = await target.page();
                         if (newPage) {
-                            await injectProtection(newPage);
+                            await injectProtection(newPage, profile.customCSS);
                             // Auto-fill nas novas abas também
                             if (profile.email && profile.password) {
                                 await newPage.evaluateOnNewDocument((email, pass) => {
@@ -3378,14 +3418,14 @@ function registerIPCHandlers() {
             console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados (modo Puppeteer)`);
 
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
-            await injectProtection(page);
+            await injectProtection(page, profile.customCSS);
 
             // PROTEÇÃO GLOBAL: Novas abas abertas pelo Rocketoolz (Access Hub)
             // Mantemos no mesmo processo Chrome para preservar autenticação e extensão carregada
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
                     const newPage = await target.page();
-                    if (newPage) await injectProtection(newPage);
+                    if (newPage) await injectProtection(newPage, profile.customCSS);
                 }
             });
 
@@ -3394,7 +3434,7 @@ function registerIPCHandlers() {
                 if (i === 0 && page.url() !== 'about:blank') continue; // Primeira já carregada pelo --app
 
                 const p = (i === 0) ? page : await browser.newPage();
-                if (i > 0) await injectProtection(p); // Protege novas páginas criadas aqui
+                if (i > 0) await injectProtection(p, profile.customCSS); // Protege novas páginas criadas aqui
 
                 // 🔥 INJEÇÃO DE COOKIES para perfis com sessão por cookies
                 if (profile.cookies && profile.cookies.trim()) {
@@ -4126,7 +4166,7 @@ function registerIPCHandlers() {
         }
     });
 
-    ipcMain.handle('open-popup', async (e, { url, partition }) => {
+    ipcMain.handle('open-popup', async (e, { url, partition, customCSS }) => {
         let win = new BrowserWindow({
             width: 1000, height: 700,
             backgroundColor: '#050505',
@@ -4134,6 +4174,13 @@ function registerIPCHandlers() {
         });
         win.setMenu(null);
         win.loadURL(url);
+        
+        if (customCSS && customCSS.trim() !== '') {
+            win.webContents.on('did-finish-load', () => {
+                win.webContents.insertCSS(customCSS);
+            });
+        }
+        
         return { status: 'success' };
     });
 
