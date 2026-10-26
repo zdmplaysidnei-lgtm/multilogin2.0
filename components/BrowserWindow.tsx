@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, HelpCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
+import { RefreshCw, ShieldCheck, ShieldAlert, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, HelpCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
 import { Profile } from '../types';
 
 interface BrowserWindowProps {
@@ -26,6 +26,17 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [isMaximized, setIsMaximized] = useState(false);
   const [webviewPreloadUrl, setWebviewPreloadUrl] = useState<string>('');
+
+  const handleClearGoogleSession = async () => {
+    if (!window.nebulaAPI?.clearGoogleSession) return;
+    try {
+      await window.nebulaAPI.clearGoogleSession('persist:' + profile.id);
+      const activeWebview = webviewRefs.current[activeTabIndex];
+      if (activeWebview) activeWebview.reload();
+      if (onToast) onToast('Sessão Google limpa com sucesso! O formulário foi destravado.', 'success');
+      else alert('Sessão Google limpa com sucesso! O formulário foi destravado.');
+    } catch (_) {}
+  };
 
   useEffect(() => {
     (window as any).nebulaAPI?.getWebviewPreload?.().then((url: string) => {
