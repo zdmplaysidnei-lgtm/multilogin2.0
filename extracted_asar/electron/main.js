@@ -1,10 +1,17 @@
 const { app, BrowserWindow, ipcMain, session, Menu, shell, dialog } = require('electron');
+const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
 const proxyChain = require('proxy-chain');
 const AdmZip = require('adm-zip');
+const { createClient } = require('@supabase/supabase-js');
+const SUPABASE_URL = 'https://fkrijejmvtwwtgirlsey.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_slrAzZ8RLnDIwaeERExJxQ_ou8prAN9';
+
+
+const supabaseAdmin = createClient('https://fkrijejmvtwwtgirlsey.supabase.co', SUPABASE_ANON_KEY);
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -14,15 +21,392 @@ puppeteer.use(StealthPlugin());
 // Aumenta o limite de listeners para evitar avisos em perfis com muitas abas
 process.setMaxListeners(0);
 
-// 🔥 CORREÇÃO: Remover AutomationControlled global que causa barra amarela
+const profileCSSMap = new Map();
+
+ipcMain.handle('get-webview-preload', () => pathToFileURL(path.join(__dirname, 'preload-webview.js')).href);
+
+ipcMain.on('register-css', (e, { partition, customCSS }) => {
+    if (customCSS && customCSS.trim()) {
+        profileCSSMap.set(partition, customCSS);
+    }
+});
+// ─── 🛡️ SECURITY & GOOGLE AUTHENTICATION SYSTEM (CREATIVE BOX STRUCTURE) ───
+const BLOCKED_DEVICE_PERMISSIONS = new Set(['hid', 'usb', 'serial']);
+const PROTECTED_USB_CLASSES = ['audio', 'audio-video', 'hid', 'mass-storage', 'smart-card', 'video', 'wireless'];
+const WEBAUTHN_DISABLE_FEATURES = [
+    'WebAuthentication',
+    'WebAuthenticationConditionalUI',
+    'WebHID',
+    'WebUSB',
+    'WebSerial',
+    'ChromeLabs',
+    'ChromeWhatsNewUI',
+    'SidePanelPinning',
+    'DevTools',
+    'DevToolsConsoleInsights'
+].join(',');
+
+// WebAuthn / Passkeys / FIDO suppression - Crucial for Google Login in embedded browsers
 if (app && app.commandLine) {
-    app.commandLine.appendSwitch('no-sandbox');
-    // AutomationControlled removido daqui para evitar o alerta do Chrome
+    app.commandLine.appendSwitch('disable-features', WEBAUTHN_DISABLE_FEATURES);
+    app.commandLine.appendSwitch('disable-webauthn');
+    app.commandLine.appendSwitch('disable-infobars');
+    app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 }
+
+const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const SEC_CH_UA = '"Google Chrome";v="141", "Chromium";v="141", "Not_A Brand";v="24"';
+const CHROME_FULL_VERSION = '141.0.7390.107';
+const CHROME_MAJOR_VERSION = '141';
+
+function isBlockedPermission(permission) {
+    return BLOCKED_DEVICE_PERMISSIONS.has(String(permission || '').toLowerCase());
+}
+
+function applyDeviceSecurityBlockers(targetSession) {
+    if (!targetSession || targetSession.__cbDeviceSecurityBlocked) return;
+    targetSession.__cbDeviceSecurityBlocked = true;
+
+    if (typeof targetSession.setPermissionRequestHandler === 'function') {
+        targetSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+            callback(!isBlockedPermission(permission));
+        });
+    }
+
+    if (typeof targetSession.setPermissionCheckHandler === 'function') {
+        targetSession.setPermissionCheckHandler((_webContents, permission) => {
+            return !isBlockedPermission(permission);
+        });
+    }
+
+    if (typeof targetSession.setDevicePermissionHandler === 'function') {
+        targetSession.setDevicePermissionHandler((details) => {
+            return !isBlockedPermission(details?.deviceType);
+        });
+    }
+
+    if (typeof targetSession.setUSBProtectedClassesHandler === 'function') {
+        targetSession.setUSBProtectedClassesHandler(() => PROTECTED_USB_CLASSES.slice());
+    }
+
+    if (typeof targetSession.on === 'function') {
+        targetSession.on('select-hid-device', (event, _details, callback) => {
+            event.preventDefault();
+            callback();
+        });
+
+        targetSession.on('select-usb-device', (event, _details, callback) => {
+            event.preventDefault();
+            callback();
+        });
+
+        targetSession.on('select-serial-port', (event, _portList, _webContents, callback) => {
+            event.preventDefault();
+            callback('');
+        });
+    }
+}
+
+function isCloudflareChallengePage(url) {
+    const lower = String(url || '').toLowerCase();
+    return /challenges\.cloudflare\.com|cdn-cgi\/challenge|cdn-cgi\/l\/chk_jschl|__cf_chl|turnstile/i.test(lower);
+}
+
+function configurePartitionSession(ses) {
+    if (!ses || ses.__cbSecurityConfigured) return;
+    ses.__cbSecurityConfigured = true;
+
+    applyDeviceSecurityBlockers(ses);
+
+    try { ses.setUserAgent(CHROME_USER_AGENT); } catch(_) {}
+
+    try {
+        ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+            if (details.resourceType === 'image' || details.resourceType === 'media' || details.resourceType === 'font' || details.resourceType === 'stylesheet') {
+                return callback({ requestHeaders: details.requestHeaders });
+            }
+
+            const headers = { ...details.requestHeaders };
+
+            const url = details.url || '';
+            if (url.includes('cdn1.suno.') || url.includes('cdn2.suno.') || url.includes('suno.ai') || url.includes('suno.com')) {
+                headers['Referer'] = 'https://suno.com/';
+                headers['Origin'] = 'https://suno.com';
+            }
+
+            headers['User-Agent'] = CHROME_USER_AGENT;
+            headers['Accept-Language'] = 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7';
+            headers['sec-ch-ua'] = SEC_CH_UA;
+            headers['sec-ch-ua-mobile'] = '?0';
+            headers['sec-ch-ua-platform'] = '"Windows"';
+            headers['sec-ch-ua-platform-version'] = '"15.0.0"';
+            headers['sec-ch-ua-arch'] = '"x86"';
+            headers['sec-ch-ua-bitness'] = '"64"';
+            headers['sec-ch-ua-full-version'] = `"${CHROME_FULL_VERSION}"`;
+            headers['sec-ch-ua-full-version-list'] = `"Google Chrome";v="${CHROME_FULL_VERSION}", "Chromium";v="${CHROME_FULL_VERSION}", "Not_A Brand";v="24.0.0.0"`;
+            headers['sec-ch-ua-model'] = '""';
+            headers['sec-ch-ua-wow64'] = '?0';
+            headers['Upgrade-Insecure-Requests'] = '1';
+
+            callback({ requestHeaders: headers });
+        });
+    } catch(err) {
+        console.warn('[session] onBeforeSendHeaders attach failed:', err && err.message);
+    }
+
+    try {
+        ses.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+            const headers = details.responseHeaders || {};
+            const url = String(details.url || '').toLowerCase();
+            if (!isCloudflareChallengePage(url)) {
+                headers['Permissions-Policy'] = ['publickey-credentials-create=(), publickey-credentials-get=()'];
+            }
+            callback({ responseHeaders: headers });
+        });
+    } catch(err) {
+        console.warn('[session] onHeadersReceived attach failed:', err && err.message);
+    }
+}
+
+const BROWSER_GUARDS_SCRIPT = `
+(function(){
+  if (window.__cbPasskeyGuardInstalled) return;
+  try { Object.defineProperty(window, '__cbPasskeyGuardInstalled', { value: true, configurable: false, writable: false }); } catch(_) {}
+  var rejectBlocked = function(m){ return Promise.reject(new DOMException(m || 'Blocked', 'NotAllowedError')); };
+  var lock = function(t, k, v){ try { Object.defineProperty(t, k, { value: v, configurable: false, writable: false }); return true; } catch(_) { try { t[k] = v; return true; } catch(_2) { return false; } } };
+  try { Object.defineProperty(navigator, 'webdriver', { get: function(){ return false; }, configurable: true }); } catch(_) {}
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      var origQ = navigator.permissions.query.bind(navigator.permissions);
+      lock(navigator.permissions, 'query', function(params){
+        var n = String((params && params.name) || '').toLowerCase();
+        if (n === 'hid' || n === 'usb' || n === 'serial') return Promise.resolve({ state: 'denied' });
+        return origQ(params);
+      });
+    }
+  } catch(_) {}
+  try {
+    var PKC = window.PublicKeyCredential || function PublicKeyCredential(){};
+    lock(window, 'PublicKeyCredential', PKC);
+    lock(window.PublicKeyCredential, 'isConditionalMediationAvailable', function(){ return Promise.resolve(false); });
+    lock(window.PublicKeyCredential, 'isUserVerifyingPlatformAuthenticatorAvailable', function(){ return Promise.resolve(false); });
+  } catch(_) {}
+  try {
+    var c = navigator.credentials;
+    if (c) {
+      var oGet = typeof c.get === 'function' ? c.get.bind(c) : null;
+      var oCreate = typeof c.create === 'function' ? c.create.bind(c) : null;
+      lock(c, 'get', function(o){ if (o && typeof o === 'object' && 'publicKey' in o) return rejectBlocked('Passkeys disabled'); return oGet ? oGet(o) : rejectBlocked(); });
+      lock(c, 'create', function(o){ if (o && typeof o === 'object' && 'publicKey' in o) return rejectBlocked('Passkeys disabled'); return oCreate ? oCreate(o) : rejectBlocked(); });
+    }
+  } catch(_) {}
+  ['hid','usb','serial'].forEach(function(k){
+    try {
+      var api = navigator[k]; if (!api) return;
+      var req = k === 'serial' ? 'requestPort' : 'requestDevice';
+      var list = k === 'serial' ? 'getPorts' : 'getDevices';
+      if (typeof api[req] === 'function') lock(api, req, function(){ return rejectBlocked(k + ' blocked'); });
+      if (typeof api[list] === 'function') lock(api, list, function(){ return Promise.resolve([]); });
+    } catch(_) {}
+  });
+})();
+`;
+
+function applyRuntimeMask(webContents) {
+  try {
+    const currentUrl = webContents.getURL();
+    if (isCloudflareChallengePage(currentUrl)) return;
+  } catch {}
+
+  webContents.executeJavaScript(`
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+
+      // Layer 4: JS-level WebAuthn / PublicKeyCredential suppression
+      if (window.PublicKeyCredential) {
+        Object.defineProperty(window.PublicKeyCredential, 'isUserVerifyingPlatformAuthenticatorAvailable', {
+          value: () => Promise.resolve(false),
+          configurable: true,
+          writable: false,
+        });
+        Object.defineProperty(window.PublicKeyCredential, 'isConditionalMediationAvailable', {
+          value: () => Promise.resolve(false),
+          configurable: true,
+          writable: false,
+        });
+        if (typeof window.PublicKeyCredential.isExternalCTAP2SecurityKeySupported === 'function') {
+          Object.defineProperty(window.PublicKeyCredential, 'isExternalCTAP2SecurityKeySupported', {
+            value: () => Promise.resolve(false),
+            configurable: true,
+            writable: false,
+          });
+        }
+      }
+      if (navigator.credentials) {
+        const origGet = navigator.credentials.get.bind(navigator.credentials);
+        Object.defineProperty(navigator.credentials, 'get', {
+          value: function(opts) {
+            if (opts && opts.publicKey) return Promise.reject(new DOMException('Not allowed', 'NotAllowedError'));
+            return origGet(opts);
+          },
+          configurable: true,
+          writable: false,
+        });
+        const origCreate = navigator.credentials.create.bind(navigator.credentials);
+        Object.defineProperty(navigator.credentials, 'create', {
+          value: function(opts) {
+            if (opts && opts.publicKey) return Promise.reject(new DOMException('Not allowed', 'NotAllowedError'));
+            return origCreate(opts);
+          },
+          configurable: true,
+          writable: false,
+        });
+      }
+
+      if (!navigator.languages || navigator.languages.length === 0) {
+        Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'], configurable: true });
+      }
+
+      const cleanUA = navigator.userAgent.replace(/\\s*Electron\\/[^\\s]+/g, '').replace(/\\s*creativebox\\/[^\\s]+/gi, '').replace(/\\s*multilogin[^\\s]+/gi, '').replace(/\\s*sidnei[^\\s]+/gi, '');
+      if (cleanUA !== navigator.userAgent) {
+        Object.defineProperty(navigator, 'userAgent', { get: () => cleanUA, configurable: true });
+        Object.defineProperty(navigator, 'appVersion', { get: () => cleanUA.replace('Mozilla/', ''), configurable: true });
+      }
+
+      // Spoof navigator.userAgentData (Chrome ${CHROME_MAJOR_VERSION}) — required by Google accounts and modern sites
+      try {
+        const brands = [
+          { brand: 'Google Chrome', version: '${CHROME_MAJOR_VERSION}' },
+          { brand: 'Chromium', version: '${CHROME_MAJOR_VERSION}' },
+          { brand: 'Not_A Brand', version: '24' },
+        ];
+        const fullVersionList = [
+          { brand: 'Google Chrome', version: '${CHROME_FULL_VERSION}' },
+          { brand: 'Chromium', version: '${CHROME_FULL_VERSION}' },
+          { brand: 'Not_A Brand', version: '24.0.0.0' },
+        ];
+        const uaData = {
+          brands,
+          mobile: false,
+          platform: 'Windows',
+          getHighEntropyValues: () => Promise.resolve({
+            brands,
+            mobile: false,
+            platform: 'Windows',
+            platformVersion: '15.0.0',
+            architecture: 'x86',
+            bitness: '64',
+            model: '',
+            uaFullVersion: '${CHROME_FULL_VERSION}',
+            fullVersionList,
+            wow64: false,
+          }),
+          toJSON: () => ({ brands, mobile: false, platform: 'Windows' }),
+        };
+        Object.defineProperty(navigator, 'userAgentData', { get: () => uaData, configurable: true });
+      } catch (_) {}
+
+      try {
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+        Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.', configurable: true });
+      } catch (_) {}
+
+      ['process', 'require', '__electron_log', 'Buffer', 'global'].forEach((key) => {
+        try {
+          if (key in window) {
+            Object.defineProperty(window, key, { get: () => undefined, configurable: true });
+          }
+        } catch {}
+      });
+
+      window.chrome = window.chrome || {};
+      window.chrome.app = window.chrome.app || {
+        isInstalled: false,
+        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+        getDetails: function() {},
+        getIsInstalled: function() { return false; },
+        runningState: function() { return 'cannot_run'; }
+      };
+      window.chrome.csi = window.chrome.csi || function() {};
+      window.chrome.loadTimes = window.chrome.loadTimes || function() {
+        return {
+          commitLoadTime: Date.now() / 1000,
+          connectionInfo: 'h2',
+          finishDocumentLoadTime: Date.now() / 1000,
+          finishLoadTime: Date.now() / 1000,
+          firstPaintAfterLoadTime: 0,
+          navigationType: 'Other',
+          npnNegotiatedProtocol: 'h2',
+          requestTime: Date.now() / 1000,
+          startLoadTime: Date.now() / 1000,
+          wasAlternateProtocolAvailable: false,
+          wasFetchedViaSpdy: true,
+          wasNpnNegotiated: true
+        };
+      };
+      try {
+        delete window.chrome.runtime;
+        delete window.chrome.webstore;
+      } catch (_) {}
+
+      if (navigator.permissions) {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (params) => (
+          params?.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(params)
+        );
+      }
+    } catch {}
+  `).catch(() => {});
+}
+
+function hardenWebContents(webContents) {
+    if (!webContents || webContents.__cbHardened) return;
+    webContents.__cbHardened = true;
+
+    try {
+        if (webContents.session) {
+            configurePartitionSession(webContents.session);
+        }
+    } catch (_) {}
+
+    webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+        if (isMainFrame === false) return;
+        applyRuntimeMask(webContents);
+    });
+
+    webContents.on('dom-ready', () => {
+        applyRuntimeMask(webContents);
+        webContents.executeJavaScript(BROWSER_GUARDS_SCRIPT).catch(() => {});
+    });
+}
+
+app.on('web-contents-created', (event, contents) => {
+    hardenWebContents(contents);
+
+    const injectGlobalCSS = async () => {
+        try {
+            for (const [partition, css] of profileCSSMap.entries()) {
+                const sess = session.fromPartition(partition);
+                if (contents.session === sess && css) {
+                    await contents.insertCSS(css, { cssOrigin: 'user' });
+                }
+            }
+        } catch (e) {
+            console.error('Erro ao injetar CSS global:', e);
+        }
+    };
+    contents.on('dom-ready', injectGlobalCSS);
+    contents.on('did-finish-load', injectGlobalCSS);
+    contents.on('did-frame-finish-load', injectGlobalCSS);
+    contents.on('did-navigate', injectGlobalCSS);
+});
 
 const SYNC_PORT = 19999;
 let mainWindow;
-const GLOBAL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const GLOBAL_UA = CHROME_USER_AGENT;
 
 
 // 🔥 ARMAZENA PROXIES ANÔNIMOS ATIVOS PARA LIMPEZA
@@ -661,8 +1045,25 @@ function createFloatingButtons(profileId) {
 }
 
 // 🔥 FUNÇÃO DE PROTEÇÃO PARA SER INJETADA NO NAVEGADOR
-async function injectProtection(targetPage) {
+async function injectProtection(targetPage, customCSS = '') {
     try {
+        if (customCSS && customCSS.trim() !== '') {
+            await targetPage.evaluateOnNewDocument((css) => {
+                window.addEventListener('DOMContentLoaded', () => {
+                    if (document.getElementById('custom-css-injected')) return;
+                    const style = document.createElement('style');
+                    style.id = 'custom-css-injected';
+                    style.textContent = css;
+                    document.head.appendChild(style);
+                });
+            }, customCSS);
+        }
+
+        targetPage.on('popup', async (popupPage) => {
+            console.log('🪟 [POPUP] Nova janela popup detectada!');
+            await injectProtection(popupPage, customCSS);
+        });
+
         // 🔥 LISTENER INTELIGENTE: Intercepta payloads de sessão e injeta cookies via CDP
         targetPage.on('console', async (msg) => {
             const text = msg.text();
@@ -672,7 +1073,7 @@ async function injectProtection(targetPage) {
             if (text.startsWith('__RTZ_TARGET__:')) {
                 // Salva a URL de destino
                 targetPage.__rtzTargetUrl = text.replace('__RTZ_TARGET__:', '').trim();
-                console.log('🎯 [TARGET] URL de destino salva:', targetPage.__rtzTargetUrl);
+                console.log('🔗 [TARGET] URL de destino salva:', targetPage.__rtzTargetUrl);
             }
 
             if (text.startsWith('__RTZ_SESSION__:')) {
@@ -1170,6 +1571,14 @@ function registerIPCHandlers() {
         return app.getVersion(); // Retorna a versão do package.json
     });
 
+    ipcMain.handle('open-external', async (event, url) => {
+        if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+            await shell.openExternal(url);
+            return { success: true };
+        }
+        return { success: false, error: 'URL inválida' };
+    });
+
     ipcMain.handle('open-external-url', async (event, url) => {
         if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
             await shell.openExternal(url);
@@ -1370,6 +1779,39 @@ function registerIPCHandlers() {
         }
     });
 
+    ipcMain.handle('admin-upsert-profile', async (event, profile, secret) => {
+        try {
+            const { error } = await supabaseAdmin
+                .from('profiles')
+                .upsert([profile], { onConflict: 'id' });
+            if (error) return { success: false, error: error.message };
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('admin-delete-profile', async (event, id, secret) => {
+        try {
+            // Tenta deletar direto primeiro
+            const { error: delError } = await supabaseAdmin
+                .from('profiles')
+                .delete()
+                .eq('id', id);
+            if (delError) {
+                // Se falhar, usa soft-delete como fallback
+                const { error: updError } = await supabaseAdmin
+                    .from('profiles')
+                    .update({ name: '__DELETED__' })
+                    .eq('id', id);
+                if (updError) return { success: false, error: updError.message };
+            }
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    });
+
     // ========== MODO NATIVO COM PRÉ-LOGIN SILENCIOSO (DRM + OCULTA SENHA) ==========
     // 1. Puppeteer HEADLESS faz login automático (invisível)
     // 2. Salva cookies no perfil
@@ -1403,6 +1845,25 @@ function registerIPCHandlers() {
             if (!prefs.autofill) prefs.autofill = {};
             prefs.autofill.credit_card_enabled = false;
             prefs.autofill.profile_enabled = false;
+
+            // 🎬 HABILITA IDENTIFICADORES DE MÍDIA PROTEGIDA (DRM / Widevine / Prime Video / Netflix)
+            if (!prefs.profile.default_content_setting_values) prefs.profile.default_content_setting_values = {};
+            prefs.profile.default_content_setting_values.protected_media_identifier = 1;
+
+            // 🎬 CLONA PASTAS DO WIDEVINE CDM DO CHROME REAL (se existirem)
+            try {
+                const realChromeUserData = path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
+                ['WidevineCdm', 'MediaFoundationWidevineCdm'].forEach(folder => {
+                    const src = path.join(realChromeUserData, folder);
+                    const dest = path.join(userDataDir, folder);
+                    if (fs.existsSync(src) && !fs.existsSync(dest)) {
+                        fs.cpSync(src, dest, { recursive: true });
+                        console.log(`🎬 [DRM] Clonado ${folder} para o perfil`);
+                    }
+                });
+            } catch (drmErr) {
+                console.warn(`⚠️ [DRM] Falha ao copiar Widevine:`, drmErr.message);
+            }
 
             // 🧩 HABILITA DEVELOPER MODE
             if (profile.enableExtensions) {
@@ -1616,8 +2077,8 @@ function registerIPCHandlers() {
                             '--lang=pt-BR,pt',
                             proxyUrl ? `--proxy-server=${proxyUrl}` : ''
                         ].filter(Boolean),
-                        // 🔥 IGNORA FLAGS DE AUTOMAÇÃO
-                        ignoreDefaultArgs: ['--enable-automation']
+                        // 🔥 IGNORA FLAGS DE AUTOMAÇÃO E PERMITE COMPONENTES (DRM / WIDEVINE)
+                        ignoreDefaultArgs: ['--enable-automation', '--disable-component-update', '--disable-component-extensions-with-background-pages']
                     });
 
                     const page = await headlessBrowser.newPage();
@@ -2094,6 +2555,7 @@ function registerIPCHandlers() {
                         executablePath,
                         headless: 'new', // Modo INVISÍVEL
                         userDataDir,
+                        ignoreDefaultArgs: ['--enable-automation', '--disable-component-update', '--disable-component-extensions-with-background-pages'],
                         args: ['--no-first-run', '--disable-infobars', '--disable-notifications']
                     });
                     
@@ -2173,6 +2635,8 @@ function registerIPCHandlers() {
                 '--disable-password-generation',
                 '--disable-save-password-bubble',
                 '--no-pings',
+                // 🎬 ATIVA SUPORTE A WIDEVINE DRM
+                '--enable-features=WidevineCdm',
                 // 🔥 ANTI-DETECÇÃO
                 // '--disable-blink-features=AutomationControlled' removido: Cloudflare detecta como bot
                 '--disable-dev-shm-usage',
@@ -2459,7 +2923,7 @@ function registerIPCHandlers() {
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
                     // Puppeteer injeta --disable-blink-features=AutomationControlled por padrão
-                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled'],
+                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled', '--disable-component-update', '--disable-component-extensions-with-background-pages'],
                     args: [
                         ...chromeArgs,
                         '--enable-unsafe-extension-debugging',
@@ -2492,7 +2956,7 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled'],
+                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection', '--disable-blink-features=AutomationControlled', '--disable-component-update', '--disable-component-extensions-with-background-pages'],
                     args: chromeArgs
                 });
             }
@@ -2933,7 +3397,7 @@ function registerIPCHandlers() {
             }
 
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
-            await injectProtection(page);
+            await injectProtection(page, profile.customCSS);
 
             // PROTEÇÃO GLOBAL: Novas abas recebem proteção + auto-fill
             // Mantemos no mesmo Chrome para preservar autenticação e extensão Rocketoolz
@@ -2942,7 +3406,7 @@ function registerIPCHandlers() {
                     try {
                         const newPage = await target.page();
                         if (newPage) {
-                            await injectProtection(newPage);
+                            await injectProtection(newPage, profile.customCSS);
                             // Auto-fill nas novas abas também
                             if (profile.email && profile.password) {
                                 await newPage.evaluateOnNewDocument((email, pass) => {
@@ -3299,7 +3763,7 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection'],
+                    ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--enable-blink-features=IdleDetection', '--disable-component-update', '--disable-component-extensions-with-background-pages'],
                     args: [
                         ...launchArgs,
                         `--load-extension=${extPathsJoined}`,
@@ -3317,7 +3781,7 @@ function registerIPCHandlers() {
                     userDataDir,
                     defaultViewport: null,
                     ignoreHTTPSErrors: true,
-                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection'],
+                    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=IdleDetection', '--disable-component-update', '--disable-component-extensions-with-background-pages'],
                     args: launchArgs
                 });
             }
@@ -3339,14 +3803,14 @@ function registerIPCHandlers() {
             console.log(`🛡️ [ANTI-DETECT] Scripts anti-detecção injetados (modo Puppeteer)`);
 
             // 🛡️ APLICA PROTEÇÃO (F12, Botão Direito, etc) via função global
-            await injectProtection(page);
+            await injectProtection(page, profile.customCSS);
 
             // PROTEÇÃO GLOBAL: Novas abas abertas pelo Rocketoolz (Access Hub)
             // Mantemos no mesmo processo Chrome para preservar autenticação e extensão carregada
             browser.on('targetcreated', async (target) => {
                 if (target.type() === 'page') {
                     const newPage = await target.page();
-                    if (newPage) await injectProtection(newPage);
+                    if (newPage) await injectProtection(newPage, profile.customCSS);
                 }
             });
 
@@ -3355,7 +3819,7 @@ function registerIPCHandlers() {
                 if (i === 0 && page.url() !== 'about:blank') continue; // Primeira já carregada pelo --app
 
                 const p = (i === 0) ? page : await browser.newPage();
-                if (i > 0) await injectProtection(p); // Protege novas páginas criadas aqui
+                if (i > 0) await injectProtection(p, profile.customCSS); // Protege novas páginas criadas aqui
 
                 // 🔥 INJEÇÃO DE COOKIES para perfis com sessão por cookies
                 if (profile.cookies && profile.cookies.trim()) {
@@ -4087,13 +4551,33 @@ function registerIPCHandlers() {
         }
     });
 
-    ipcMain.handle('open-popup', async (e, { url, partition }) => {
+    ipcMain.handle('open-popup', async (e, { url, partition, customCSS }) => {
+        const ses = partition ? session.fromPartition(partition) : session.defaultSession;
+        configurePartitionSession(ses);
+
         let win = new BrowserWindow({
             width: 1000, height: 700,
             backgroundColor: '#050505',
-            webPreferences: { partition, contextIsolation: true, nodeIntegration: false }
+            webPreferences: {
+                partition,
+                contextIsolation: true,
+                nodeIntegration: false,
+                preload: path.join(__dirname, 'preload-webview.js')
+            }
         });
         win.setMenu(null);
+        
+        if (customCSS && customCSS.trim() !== '') {
+            const inject = () => {
+                win.webContents.insertCSS(customCSS, { cssOrigin: 'user' }).catch(() => {});
+            };
+            win.webContents.on('dom-ready', inject);
+            win.webContents.on('did-finish-load', inject);
+            win.webContents.on('did-frame-finish-load', inject);
+            win.webContents.on('did-navigate', inject);
+            win.webContents.on('did-navigate-in-page', inject);
+        }
+
         win.loadURL(url);
         return { status: 'success' };
     });
@@ -4315,6 +4799,7 @@ function registerIPCHandlers() {
 }
 
 function createMainWindow() {
+    if (session && session.defaultSession) configurePartitionSession(session.defaultSession);
     Menu.setApplicationMenu(null);
     mainWindow = new BrowserWindow({
         width: 1400, height: 900, backgroundColor: '#050505',
@@ -4324,12 +4809,21 @@ function createMainWindow() {
             webviewTag: true, webSecurity: false
         },
     });
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+            shell.openExternal(url);
+        }
+        return { action: 'deny' };
+    });
+
     if (app.isPackaged) mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
     else mainWindow.loadURL('http://localhost:5173');
 }
 
 // 📥 GLOBAL DOWNLOAD MONITOR — Captura downloads do APP e TODOS OS PERFIS INTERNOS (WebViews)
 app.on('session-created', (ses) => {
+    configurePartitionSession(ses);
+
     ses.on('will-download', (event, item) => {
         const fileName = item.getFilename();
         const totalBytes = item.getTotalBytes();

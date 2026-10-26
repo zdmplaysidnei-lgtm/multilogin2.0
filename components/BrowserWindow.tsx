@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
+import { RefreshCw, ShieldCheck, Lock, ChevronLeft, ChevronRight, Globe, Key, UploadCloud, Database, MessageSquare, Ban, X, Power, PlayCircle, HelpCircle, MessageCircle, Download, CheckCircle, AlertCircle, Search, ChevronUp, ChevronDown, Minus, Square, Maximize2 } from 'lucide-react';
 import { Profile } from '../types';
 
 interface BrowserWindowProps {
@@ -19,12 +19,19 @@ interface DownloadStatus {
   state: 'downloading' | 'success' | 'error';
 }
 
-const COMPATIBLE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+const COMPATIBLE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
 export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible, onClose, onTerminate, onToast, blockedUrls = [], onSyncSession }) => {
   const [tabs] = useState<string[]>(profile.urls && profile.urls.length > 0 ? profile.urls : ['https://google.com']);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [webviewPreloadUrl, setWebviewPreloadUrl] = useState<string>('');
+
+  useEffect(() => {
+    (window as any).nebulaAPI?.getWebviewPreload?.().then((url: string) => {
+      if (url) setWebviewPreloadUrl(url);
+    }).catch(() => {});
+  }, []);
   const [position, setPosition] = useState({ x: 50, y: 50 });
   const [size, setSize] = useState({ width: 1000, height: 700 });
   const [isDragging, setIsDragging] = useState(false);
@@ -68,6 +75,11 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
       // Se nebulaAPI existir, configura proxy e cookies
       if (window.nebulaAPI) {
+        try {
+          const preload = await (window as any).nebulaAPI.getWebviewPreload?.();
+          if (preload) setWebviewPreloadUrl(preload);
+        } catch (_) {}
+
         const partition = "persist:" + profile.id;
         try {
           await window.nebulaAPI.setProxy(profile.proxy || '', partition);
@@ -391,12 +403,63 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         }
 
         webview.insertCSS(`
-          input::-ms-reveal, input::-ms-clear { display: none !important; }
+          input[name="Passwd"], input[type="password"], input[autocomplete*="password"],
+          input[name*="password" i], input[name*="senha" i], input[id*="password" i], input[id*="senha" i] {
+            -webkit-text-security: disc !important;
+          }
+
+          div[jsname="ipZ2Me"], div[class*="VfPpkd-mpDnFf"], div[class*="VfPpkd-dgl2Hf"],
+          .VfPpkd-muHqAb-w39FEf, .VfPpkd-muHqAb-mWPyrf,
+          div:has(> input[type="checkbox"]), label:has(input[type="checkbox"]),
+          form:has(input[name="Passwd"]) input[type="checkbox"],
+          input[type="checkbox"][id*="c"], input[type="checkbox"][id*="selection"],
+          label[for*="c0"], label[for*="c1"], label[for*="selection"],
+          div:has(> label[for*="selection"]), div:has(> label[for*="c0"]),
+          input::-ms-reveal, input::-ms-clear,
           .password-toggle, .show-password, [class*="eye"], [id*="eye"], svg[class*="eye"], 
           button[class*="eye"], .reveal-password, [class*="PasswordToggle"],
           button[aria-label*="senha"], button[aria-label*="password"], 
-          .toggle-password, i[class*="eye"], [data-testid*="eye"], [aria-label*="Show password"] { 
+          .toggle-password, i[class*="eye"], [data-testid*="eye"], [aria-label*="Show password"],
+          [aria-label*="senha" i], [aria-label*="password" i], [aria-label*="mostrar" i], [aria-label*="show" i],
+          button[title*="senha" i], button[title*="password" i],
+          input[type="password"] ~ button, input[type="password"] ~ span, input[type="password"] ~ div:has(button) { 
               display: none !important; 
+              visibility: hidden !important;
+              opacity: 0 !important;
+              pointer-events: none !important;
+              height: 0 !important;
+              min-height: 0 !important;
+              max-height: 0 !important;
+              overflow: hidden !important;
+          }
+
+          /* White-label: Substitui Creative Box por Ferramentas Ilimitadas e Ícone de IA */
+          .brand img, img[alt*="Creative Box" i] {
+            content: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMGIwODE5Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzIzMTAzYyIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYWkiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDBmMmZlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iNTAlIiBzdG9wLWNvbG9yPSIjOGI1Y2Y2Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2VjNDg5OSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxmaWx0ZXIgaWQ9Imdsb3ciIHg9Ii0yMCUiIHk9Ii0yMCUiIHdpZHRoPSIxNDAlIiBoZWlnaHQ9IjE0MCUiPgogICAgICA8ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIxIiByZXN1bHQ9ImJsdXIiLz4KICAgIDxmaWx0ZXI+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEyIiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxyZWN0IHg9IjAuNSIgeT0iMC41IiB3aWR0aD0iNDciIGhlaWdodD0iNDciIHJ4PSIxMS41IiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMTM5LDkyLDI0NiwwLjUpIiBzdHJva2Utd2lkdGg9IjEuNSIvPgogIDxwYXRoIGQ9Ik0yMiA5IEMyMiAxNyAxNSAyMiA3IDIyIEMxNSAyMiAyMiAyNyAyMiAzNSBDMjIgMjcgMjkgMjIgMzcgMjIgQzI5IDIyIDIyIDE3IDIyIDkgWiIgZmlsbD0idXJsKCNhaSkiLz4KICA8Y2lyY2xlIGN4PSIyMiIgY3k9IjIyIiByPSIyLjIiIGZpbGw9IiNmZmZmZmYiLz4KICA8cGF0aCBkPSJNMzUgOCBDMzUgMTIgMzIgMTUgMjggMTUgQzMyIDE1IDM1IDE4IDM1IDIyIEMzNSAxOCAzOCAxNSA0MiAxNSBDMzggMTUgMzUgMTIgMzUgOCBaIiBmaWxsPSIjMDBmMmZlIi8+CiAgPGNpcmNsZSBjeD0iMzUiIGN5PSIxNSIgcj0iMS4yIiBmaWxsPSIjZmZmZmZmIi8+CiAgPHBhdGggZD0iTTEzIDI4IEMxMyAzMSAxMC41IDMzIDggMzMgQzEwLjUgMzMgMTMgMzUgMTMgMzggQzEzIDM1IDE1LjUgMzMgMTggMzMgQzE1LjUgMzMgMTMgMzEgMTMgMjggWiIgZmlsbD0iI2VjNDg5OSIvPgo8L3N2Zz4=") !important;
+            width: 46px !important;
+            height: 46px !important;
+            object-fit: contain !important;
+            border-radius: 12px !important;
+          }
+
+          .brand b, .brand strong, .brand span, [class*="brand"] b {
+            font-size: 0 !important;
+            color: transparent !important;
+            line-height: 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+          }
+
+          .brand b::after, .brand strong::after, .brand span::after, [class*="brand"] b::after {
+            content: "Ferramentas Ilimitadas" !important;
+            font-size: 22px !important;
+            line-height: 1.2 !important;
+            font-weight: 800 !important;
+            background: linear-gradient(135deg, #00f2fe 0%, #4facfe 30%, #a78bfa 70%, #f43f5e 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            display: inline-block !important;
+            letter-spacing: -0.3px !important;
           }
         `);
 
@@ -409,204 +472,139 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           runCustomAutomation(webview);
         }
 
-        // 🔥 SCRIPT ANTI-DETECÇÃO ULTRA AVANÇADO (PARA GOOGLE/MICROSOFT)
+                // 🔥 SCRIPT ANTI-DETECÇÃO COMPATÍVEL COM GOOGLE ACCOUNTS (BASEADO NO CREATIVE BOX)
         const antiDetectionScript = `
           (function() {
-            if (window.__antiDetectRan) return;
-            window.__antiDetectRan = true;
-            
-            // Remove webdriver property
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
-            
-            // 🔥 CRÍTICO PARA GOOGLE: Faz parecer que não é iframe/webview
+            if (window.__cbAntiDetectRan) return;
+            window.__cbAntiDetectRan = true;
+
             try {
-              Object.defineProperty(window, 'self', { get: () => window.top, configurable: true });
-              Object.defineProperty(window, 'frameElement', { get: () => null, configurable: true });
-            } catch(e) {}
-            
-            // 🔥 GOOGLE VERIFICA: window.opener (se foi aberto como popup)
-            if (!window.opener) {
-              Object.defineProperty(window, 'opener', { get: () => null, configurable: true });
-            }
-            
-            // 🔥 GOOGLE VERIFICA: outerWidth/outerHeight (webviews tem valores diferentes)
-            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth, configurable: true });
-            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 100, configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: devicePixelRatio
-            Object.defineProperty(window, 'devicePixelRatio', { get: () => 1, configurable: true });
-            
-            // Fake plugins (como Chrome real)
-            const fakePlugins = [
-              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
-              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
-              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 }
-            ];
-            fakePlugins.length = 3;
-            fakePlugins.item = (i) => fakePlugins[i];
-            fakePlugins.namedItem = (name) => fakePlugins.find(p => p.name === name);
-            fakePlugins.refresh = () => {};
-            Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins, configurable: true });
-            
-            // Fake mimeTypes (Google verifica)
-            const fakeMimeTypes = [
-              { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: fakePlugins[0] },
-              { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable', enabledPlugin: fakePlugins[2] }
-            ];
-            fakeMimeTypes.length = 2;
-            fakeMimeTypes.item = (i) => fakeMimeTypes[i];
-            fakeMimeTypes.namedItem = (type) => fakeMimeTypes.find(m => m.type === type);
-            Object.defineProperty(navigator, 'mimeTypes', { get: () => fakeMimeTypes, configurable: true });
-            
-            // Fake languages
-            Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'], configurable: true });
-            Object.defineProperty(navigator, 'language', { get: () => 'pt-BR', configurable: true });
-            
-            // Fake platform
-            Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
-            
-            // Fake vendor
-            Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.', configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: productSub e appVersion
-            Object.defineProperty(navigator, 'productSub', { get: () => '20030107', configurable: true });
-            Object.defineProperty(navigator, 'appVersion', { get: () => '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36', configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: maxTouchPoints (desktop = 0)
-            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: hardwareConcurrency
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: deviceMemory
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
-            
-            // 🔥 GOOGLE VERIFICA: connection
-            Object.defineProperty(navigator, 'connection', { 
-              get: () => ({ 
-                effectiveType: '4g', 
-                rtt: 50, 
-                downlink: 10, 
-                saveData: false,
-                onchange: null,
-                addEventListener: () => {},
-                removeEventListener: () => {}
-              }), 
-              configurable: true 
-            });
-            
-            // Chrome runtime (CRÍTICO para Google/Microsoft)
-            window.chrome = {
-              runtime: { 
-                id: undefined, 
-                connect: () => {}, 
-                sendMessage: () => {}, 
-                onMessage: { addListener: () => {}, removeListener: () => {} },
-                onConnect: { addListener: () => {}, removeListener: () => {} },
-                getManifest: () => null,
-                getURL: () => ''
-              },
-              loadTimes: () => ({ 
-                commitLoadTime: Date.now() / 1000, 
-                connectionInfo: 'http/1.1', 
-                finishDocumentLoadTime: Date.now() / 1000, 
-                finishLoadTime: Date.now() / 1000, 
-                firstPaintAfterLoadTime: 0, 
-                firstPaintTime: Date.now() / 1000, 
-                navigationType: 'Other', 
-                npnNegotiatedProtocol: 'unknown', 
-                requestTime: Date.now() / 1000, 
-                startLoadTime: Date.now() / 1000, 
-                wasAlternateProtocolAvailable: false, 
-                wasFetchedViaSpdy: false, 
-                wasNpnNegotiated: false 
-              }),
-              csi: () => ({ pageT: Date.now(), startE: Date.now(), onloadT: Date.now() }),
-              app: { 
-                isInstalled: false, 
-                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, 
-                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } 
-              }
-            };
-            
-            // Override permissions query
-            if (navigator.permissions && navigator.permissions.query) {
-              const originalQuery = navigator.permissions.query.bind(navigator.permissions);
-              navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : originalQuery(parameters)
-              );
-            }
-            
-            // 🔥 GOOGLE VERIFICA: Notification constructor
-            if (typeof Notification !== 'undefined') {
-              const OriginalNotification = Notification;
-              Notification = function(title, options) {
-                return new OriginalNotification(title, options);
-              };
-              Notification.permission = OriginalNotification.permission || 'default';
-              Notification.requestPermission = OriginalNotification.requestPermission?.bind(OriginalNotification) || (() => Promise.resolve('default'));
-              Notification.maxActions = OriginalNotification.maxActions || 2;
-            }
-            
-            // Remove automation indicators
-            const propsToDelete = [
-              'cdc_adoQpoasnfa76pfcZLmcfl_Array',
-              'cdc_adoQpoasnfa76pfcZLmcfl_Promise', 
-              'cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
-              '__webdriver_script_fn',
-              '__driver_evaluate',
-              '__webdriver_evaluate',
-              '__selenium_evaluate',
-              '__fxdriver_evaluate',
-              '__driver_unwrapped',
-              '__webdriver_unwrapped',
-              '__selenium_unwrapped',
-              '__fxdriver_unwrapped',
-              '__lastWatirAlert',
-              '__lastWatirConfirm',
-              '__lastWatirPrompt',
-              '$chrome_asyncScriptInfo',
-              '__$webdriverAsyncExecutor'
-            ];
-            propsToDelete.forEach(p => { try { delete window[p]; } catch(e) {} });
-            propsToDelete.forEach(p => { try { delete document[p]; } catch(e) {} });
-            
-            // 🔥 GOOGLE VERIFICA: Canvas fingerprint (retorna consistente)
-            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            HTMLCanvasElement.prototype.toDataURL = function(type) {
-              if (this.width === 0 || this.height === 0) return originalToDataURL.apply(this, arguments);
-              return originalToDataURL.apply(this, arguments);
-            };
-            
-            // 🔥 GOOGLE VERIFICA: WebGL fingerprint
-            const getParameterProxyHandler = {
-              apply: function(target, ctx, args) {
-                const param = args[0];
-                const result = Reflect.apply(target, ctx, args);
-                // Retorna valores de GPU comum
-                if (param === 37445) return 'Intel Inc.'; // UNMASKED_VENDOR_WEBGL
-                if (param === 37446) return 'Intel(R) UHD Graphics 630'; // UNMASKED_RENDERER_WEBGL
-                return result;
-              }
-            };
-            try {
-              const canvas = document.createElement('canvas');
-              const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-              if (gl) {
-                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-                if (debugInfo) {
-                  gl.getParameter = new Proxy(gl.getParameter.bind(gl), getParameterProxyHandler);
+              Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+            } catch (_) {}
+
+            if (window.PublicKeyCredential) {
+              try {
+                Object.defineProperty(window.PublicKeyCredential, 'isUserVerifyingPlatformAuthenticatorAvailable', {
+                  value: () => Promise.resolve(false), configurable: true, writable: false
+                });
+                Object.defineProperty(window.PublicKeyCredential, 'isConditionalMediationAvailable', {
+                  value: () => Promise.resolve(false), configurable: true, writable: false
+                });
+                if (typeof window.PublicKeyCredential.isExternalCTAP2SecurityKeySupported === 'function') {
+                  Object.defineProperty(window.PublicKeyCredential, 'isExternalCTAP2SecurityKeySupported', {
+                    value: () => Promise.resolve(false), configurable: true, writable: false
+                  });
                 }
+              } catch (_) {}
+            }
+
+            if (navigator.credentials) {
+              try {
+                const origGet = navigator.credentials.get.bind(navigator.credentials);
+                Object.defineProperty(navigator.credentials, 'get', {
+                  value: function(opts) {
+                    if (opts && opts.publicKey) return Promise.reject(new DOMException('Passkeys disabled', 'NotAllowedError'));
+                    return origGet(opts);
+                  },
+                  configurable: true,
+                  writable: false
+                });
+                const origCreate = navigator.credentials.create.bind(navigator.credentials);
+                Object.defineProperty(navigator.credentials, 'create', {
+                  value: function(opts) {
+                    if (opts && opts.publicKey) return Promise.reject(new DOMException('Passkeys disabled', 'NotAllowedError'));
+                    return origCreate(opts);
+                  },
+                  configurable: true,
+                  writable: false
+                });
+              } catch (_) {}
+            }
+
+            try {
+              if (!navigator.languages || navigator.languages.length === 0) {
+                Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'], configurable: true });
               }
-            } catch(e) {}
-            
-            // Fake screen
-            Object.defineProperty(screen, 'availWidth', { get: () => window.screen.width, configurable: true });
-            Object.defineProperty(screen, 'availHeight', { get: () => window.screen.height - 40, configurable: true });
-            Object.defineProperty(screen, 'colorDepth', { get: () => 24, configurable: true });
-            Object.defineProperty(screen, 'pixelDepth', { get: () => 24, configurable: true });
-            
-            console.log('🛡️ Anti-detecção avançada ativada');
+              Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+              Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.', configurable: true });
+            } catch (_) {}
+
+            try {
+              const cleanUA = navigator.userAgent
+                .replace(/\s*Electron\/[^\s]+/g, '')
+                .replace(/\s*creativebox\/[^\s]+/gi, '')
+                .replace(/\s*multilogin[^\s]+/gi, '')
+                .replace(/\s*sidnei[^\s]+/gi, '');
+              if (cleanUA !== navigator.userAgent) {
+                Object.defineProperty(navigator, 'userAgent', { get: () => cleanUA, configurable: true });
+                Object.defineProperty(navigator, 'appVersion', { get: () => cleanUA.replace('Mozilla/', ''), configurable: true });
+              }
+            } catch (_) {}
+
+            try {
+              const brands = [
+                { brand: 'Google Chrome', version: '141' },
+                { brand: 'Chromium', version: '141' },
+                { brand: 'Not_A Brand', version: '24' },
+              ];
+              const fullVersionList = [
+                { brand: 'Google Chrome', version: '141.0.7390.107' },
+                { brand: 'Chromium', version: '141.0.7390.107' },
+                { brand: 'Not_A Brand', version: '24.0.0.0' },
+              ];
+              const uaData = {
+                brands,
+                mobile: false,
+                platform: 'Windows',
+                getHighEntropyValues: () => Promise.resolve({
+                  brands,
+                  mobile: false,
+                  platform: 'Windows',
+                  platformVersion: '15.0.0',
+                  architecture: 'x86',
+                  bitness: '64',
+                  model: '',
+                  uaFullVersion: '141.0.7390.107',
+                  fullVersionList,
+                  wow64: false,
+                }),
+                toJSON: () => ({ brands, mobile: false, platform: 'Windows' }),
+              };
+              Object.defineProperty(navigator, 'userAgentData', { get: () => uaData, configurable: true });
+            } catch (_) {}
+
+            try {
+              window.chrome = window.chrome || {};
+              window.chrome.app = window.chrome.app || {
+                isInstalled: false,
+                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                getDetails: function() {},
+                getIsInstalled: function() { return false; },
+                runningState: function() { return 'cannot_run'; }
+              };
+              window.chrome.csi = window.chrome.csi || function() {};
+              window.chrome.loadTimes = window.chrome.loadTimes || function() {
+                return {
+                  commitLoadTime: Date.now() / 1000,
+                  connectionInfo: 'h2',
+                  finishDocumentLoadTime: Date.now() / 1000,
+                  finishLoadTime: Date.now() / 1000,
+                  firstPaintAfterLoadTime: 0,
+                  navigationType: 'Other',
+                  npnNegotiatedProtocol: 'h2',
+                  requestTime: Date.now() / 1000,
+                  startLoadTime: Date.now() / 1000,
+                  wasAlternateProtocolAvailable: false,
+                  wasFetchedViaSpdy: true,
+                  wasNpnNegotiated: true
+                };
+              };
+              try {
+                delete window.chrome.runtime;
+                delete window.chrome.webstore;
+              } catch (_) {}
+            } catch (_) {}
           })();
         `;
         webview.executeJavaScript(antiDetectionScript);
@@ -622,31 +620,217 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               }
             }
             setInterval(check, 1000); check();
-
-            const EMAIL = '${profile.email || ''}';
-            const PASS = '${profile.password || ''}';
-            function triggerNativeInput(el, val) {
-              const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-              setter ? setter.call(el, val) : (el.value = val);
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            function fill() {
-              if (!${autoFillEnabled}) return;
-              document.querySelectorAll('input').forEach(i => {
-                const attr = (i.name + i.id + i.placeholder + (i.getAttribute('aria-label')||'')).toLowerCase();
-                if (EMAIL && (i.type === 'email' || attr.includes('user') || attr.includes('login') || attr.includes('email'))) {
-                  if (!i.value) triggerNativeInput(i, EMAIL);
-                }
-                if (PASS && (i.type === 'password' || attr.includes('pass') || attr.includes('senha'))) {
-                  if (!i.value) triggerNativeInput(i, PASS);
-                  if (i.type !== 'password') i.type = 'password';
-                }
-              });
-            }
-            setInterval(fill, 3000); fill();
           })();
         `;
         webview.executeJavaScript(maintenanceScript);
+
+        // 🔥 MOTOR DE AUTO-PREENCHIMENTO MULTI-ETAPAS (COMPATÍVEL COM GOOGLE ACCOUNTS, REACT, VUE, SPAS)
+        if (autoFillEnabled && (profile.email || profile.password)) {
+          const autofillScript = `
+            (function() {
+              var EMAIL_VALUE = ${JSON.stringify(profile.email || '')};
+              var PASSWORD_VALUE = ${JSON.stringify(profile.password || '')};
+
+              var EMAIL_SELECTORS = [
+                'input#identifierId',
+                'input[name="identifier"]',
+                'input[type="email"]',
+                'input[inputmode="email"]',
+                'input[autocomplete="email"]',
+                'input[autocomplete="username"]',
+                'input[autocomplete="tel"]',
+                'input[name*="email" i]',
+                'input[name*="mail" i]',
+                'input[name*="user" i]',
+                'input[name*="login" i]',
+                'input[name*="identifier" i]',
+                'input[name*="usuario" i]',
+                'input[name*="cpf" i]',
+                'input[name*="document" i]',
+                'input[name*="account" i]',
+                'input[id*="email" i]',
+                'input[id*="mail" i]',
+                'input[id*="user" i]',
+                'input[id*="login" i]',
+                'input[id*="identifier" i]',
+                'input[id*="cpf" i]',
+                'input[aria-label*="e-mail" i]',
+                'input[aria-label*="email" i]',
+                'input[aria-label*="usu" i]',
+                'input[aria-label*="login" i]',
+                'input[aria-label*="telefone" i]',
+                'input[placeholder*="e-mail" i]',
+                'input[placeholder*="email" i]',
+                'input[placeholder*="usu" i]',
+                'input[placeholder*="login" i]',
+                'input[placeholder*="telefone" i]',
+                'input[placeholder*="cpf" i]',
+                'input[type="tel"]'
+              ];
+
+              var PASSWORD_SELECTORS = [
+                'input[type="password"]',
+                'input[name="Passwd"]',
+                'input[autocomplete="current-password"]',
+                'input[autocomplete="new-password"]',
+                'input[name*="password" i]',
+                'input[name*="senha" i]',
+                'input[name*="passwd" i]',
+                'input[name*="pwd" i]',
+                'input[id*="password" i]',
+                'input[id*="senha" i]',
+                'input[id*="passwd" i]',
+                'input[id*="pwd" i]',
+                'input[aria-label*="senha" i]',
+                'input[aria-label*="password" i]',
+                'input[placeholder*="senha" i]',
+                'input[placeholder*="password" i]',
+                'input[placeholder*="sua senha" i]'
+              ];
+
+              function isVisible(field) {
+                if (!field || field.disabled || !field.isConnected) return false;
+                var rect = field.getBoundingClientRect();
+                var styles = window.getComputedStyle(field);
+                return rect.width > 0 && rect.height > 0 && styles.visibility !== 'hidden' && styles.display !== 'none';
+              }
+
+              function listSearchRoots(root) {
+                var roots = [];
+                var seen = [];
+                function visit(node) {
+                  if (!node || seen.indexOf(node) !== -1) return;
+                  seen.push(node);
+                  if (typeof node.querySelectorAll === 'function') roots.push(node);
+                  var elements = node.children ? Array.prototype.slice.call(node.children) : [];
+                  elements.forEach(function(el) {
+                    if (el.shadowRoot) visit(el.shadowRoot);
+                    if (el.tagName === 'IFRAME') { try { if (el.contentDocument) visit(el.contentDocument); } catch (_) {} }
+                  });
+                }
+                visit(root || document);
+                return roots;
+              }
+
+              function queryAllDeep(selectors) {
+                var matches = [], seen = [];
+                listSearchRoots(document).forEach(function(root) {
+                  selectors.forEach(function(sel) {
+                    try {
+                      Array.prototype.slice.call(root.querySelectorAll(sel)).forEach(function(el) {
+                        if (seen.indexOf(el) === -1) { seen.push(el); matches.push(el); }
+                      });
+                    } catch (_) {}
+                  });
+                });
+                return matches;
+              }
+
+              function findField(selectors) {
+                return queryAllDeep(selectors).find(function(f) { return isVisible(f); }) || null;
+              }
+
+              function setNativeValue(field, value, previousValue) {
+                var ownerWindow = field && field.ownerDocument && field.ownerDocument.defaultView ? field.ownerDocument.defaultView : window;
+                var proto = field.tagName === 'TEXTAREA'
+                  ? ownerWindow.HTMLTextAreaElement.prototype
+                  : ownerWindow.HTMLInputElement.prototype;
+                var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                if (desc && typeof desc.set === 'function') desc.set.call(field, value);
+                else field.value = value;
+                try { field.setAttribute('value', value); } catch (_) {}
+                try {
+                  if (field._valueTracker && typeof field._valueTracker.setValue === 'function') {
+                    field._valueTracker.setValue(String(previousValue || ''));
+                  }
+                } catch (_) {}
+              }
+
+              function setValue(field, value) {
+                if (!field) return false;
+                try {
+                  field.removeAttribute('readonly');
+                  field.removeAttribute('disabled');
+                  field.readOnly = false;
+                  field.disabled = false;
+                } catch (_) {}
+                try { field.focus({ preventScroll: true }); } catch (_) { try { field.focus(); } catch (_) {} }
+                try { field.select && field.select(); } catch (_) {}
+                var previousValue = String(field.value || '');
+                setNativeValue(field, value, previousValue);
+                try {
+                  if (typeof field.setSelectionRange === 'function') {
+                    field.setSelectionRange(String(value).length, String(value).length);
+                  }
+                } catch (_) {}
+                try {
+                  field.dispatchEvent(new InputEvent('beforeinput', {
+                    bubbles: true,
+                    cancelable: true,
+                    data: String(value),
+                    inputType: previousValue ? 'insertReplacementText' : 'insertText',
+                  }));
+                } catch (_) {}
+                try {
+                  field.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    composed: true,
+                    data: String(value),
+                    inputType: previousValue ? 'insertReplacementText' : 'insertText',
+                  }));
+                } catch (_) {
+                  field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                }
+                try { field.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (_) {}
+                return String(field.value || '').trim() === String(value || '').trim();
+              }
+
+              function showAutofillToast() {
+                if (window.__cb_autofill_toast_shown) return;
+                window.__cb_autofill_toast_shown = true;
+                try {
+                  var host = document.createElement('div');
+                  host.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
+                  var t = document.createElement('div');
+                  t.style.cssText = 'display:inline-flex;gap:12px;align-items:center;background:linear-gradient(135deg,#062c1d,#0b3a26);color:#fff;padding:10px 18px;border-radius:14px;box-shadow:0 18px 40px rgba(0,0,0,.5),0 0 0 1px rgba(16,185,129,.4);';
+                  t.innerHTML = '<span style="width:26px;height:26px;border-radius:8px;background:#10b981;display:inline-flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:bold;">✓</span><div><div style="font-weight:800;font-size:12px;letter-spacing:0.3px;">E-mail e senha preenchidos automaticamente</div><div style="font-size:11px;color:#34d399;">Tudo pronto — clique em Fazer Login para acessar</div></div>';
+                  host.appendChild(t);
+                  (document.body || document.documentElement).appendChild(host);
+                  setTimeout(function(){ host.remove(); }, 4000);
+                } catch (_) {}
+              }
+
+              var emailDone = false;
+              var passwordDone = false;
+
+              function tryFill() {
+                if (EMAIL_VALUE && !emailDone) {
+                  var emailField = findField(EMAIL_SELECTORS);
+                  if (emailField && (!emailField.value || emailField.value !== EMAIL_VALUE)) {
+                    if (setValue(emailField, EMAIL_VALUE)) {
+                      emailDone = true;
+                    }
+                  }
+                }
+
+                if (PASSWORD_VALUE && !passwordDone) {
+                  var passwordField = findField(PASSWORD_SELECTORS);
+                  if (passwordField && (!passwordField.value || passwordField.value !== PASSWORD_VALUE)) {
+                    if (setValue(passwordField, PASSWORD_VALUE)) {
+                      passwordDone = true;
+                      showAutofillToast();
+                    }
+                  }
+                }
+              }
+
+              tryFill();
+              var fillInterval = setInterval(tryFill, 400);
+              setTimeout(function() { clearInterval(fillInterval); }, 45000);
+            })();
+          `;
+          webview.executeJavaScript(autofillScript);
+        }
       };
 
       webview.addEventListener('dom-ready', handleDomReady);
@@ -659,7 +843,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       });
       webview.addEventListener('new-window', (e: any) => {
         e.preventDefault();
-        (window as any).nebulaAPI?.openPopup(e.url, "persist:" + profile.id, profile.customCSS);
+        (window as any).nebulaAPI?.openPopup(e.url, "persist:" + profile.id, profile.customCSS, { email: profile.email, password: profile.password });
       });
       webview.addEventListener('page-title-updated', (e: any) => {
         if (e.title && e.title.startsWith('DOWNLOAD_REQUEST_URL:')) {
@@ -735,7 +919,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         </div>
         <div className="flex-1 bg-[#1a1a1a] rounded h-6 flex items-center px-3 text-xs text-gray-400 border border-gray-700 overflow-hidden select-none">
           <Lock size={10} className="mr-2 text-green-500 flex-shrink-0" />
-          <span className="truncate font-black uppercase tracking-tighter text-[9px]">Sessão Criptografada (Chrome 143) — {profile.name} — Aba {activeTabIndex + 1}</span>
+          <span className="truncate font-black uppercase tracking-tighter text-[9px]">Sessão Criptografada (Chrome 141) — {profile.name} — Aba {activeTabIndex + 1}</span>
         </div>
 
         <div className="flex gap-1">
@@ -768,6 +952,22 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           {profile.automationScript && (
             <button onClick={() => runCustomAutomation(activeWebview)} className="p-1.5 rounded text-green-400 hover:bg-green-900/20 transition-all" title="Executar Script">
               <PlayCircle size={16} />
+            </button>
+          )}
+          {profile.videoTutorial && profile.videoTutorial.trim() !== '' && (
+            <button
+              onClick={() => {
+                let url = profile.videoTutorial!.trim();
+                if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+                const api = (window as any).nebulaAPI;
+                if (api?.openExternalUrl) api.openExternalUrl(url).catch(() => window.open(url, '_blank'));
+                else if (api?.openExternal) api.openExternal(url).catch(() => window.open(url, '_blank'));
+                else window.open(url, '_blank');
+              }}
+              className="p-1.5 rounded text-[#a78bfa] hover:text-white hover:bg-purple-900/20 transition-all flex items-center gap-1"
+              title="Ver Instruções / Tutorial"
+            >
+              <HelpCircle size={16} />
             </button>
           )}
           <button onClick={() => performCloudSync(true)} disabled={isSyncing} className={`p-1.5 rounded ${isSyncing ? 'text-[#FF6B6B]' : 'text-gray-400 hover:text-white'}`} title="Sincronizar Nuvem">
@@ -825,7 +1025,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       )}
 
       <div className="flex-1 relative bg-white">
-        {isReadyToNavigate && !isRestoringSession ? (
+        {isReadyToNavigate && !isRestoringSession && (!window.nebulaAPI || !!webviewPreloadUrl) ? (
           tabs.map((url, idx) => (
             <webview
               key={idx}
@@ -835,6 +1035,8 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               // @ts-ignore
               allowpopups="true"
               useragent={COMPATIBLE_USER_AGENT}
+              // @ts-ignore
+              preload={webviewPreloadUrl || undefined}
               webpreferences="contextIsolation=yes, nodeIntegration=no, webSecurity=yes, spellcheck=yes, plugins=yes, javascript=yes, allowRunningInsecureContent=no, experimentalFeatures=no"
               style={{ width: '100%', height: '100%', display: activeTabIndex === idx ? 'flex' : 'none' }}
             />
@@ -842,7 +1044,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         ) : (
           <div className="absolute inset-0 bg-[#0f0f0f] flex flex-col items-center justify-center gap-6">
             <Database className="w-16 h-16 text-[#E50914] animate-pulse" />
-            <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 143)...</h3>
+            <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 141)...</h3>
           </div>
         )}
         {isLoading && !isRestoringSession && (

@@ -1,11 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('nebulaAPI', {
+  getWebviewPreload: () => ipcRenderer.invoke('get-webview-preload'),
   launchProfile: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile', profile, customBrowserPath),
   launchProfileNative: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile-native', profile, customBrowserPath),
   registerCss: (partition, customCSS) => ipcRenderer.send('register-css', { partition, customCSS }),
-  openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  openPopup: (url, partition, customCSS) => ipcRenderer.invoke('open-popup', { url, partition, customCSS }),
+  openExternal: (url) => ipcRenderer.invoke('open-external-url', url),
+  openPopup: (url, partition, customCSS, credentials) => ipcRenderer.invoke('open-popup', { url, partition, customCSS, credentials }),
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   checkProxy: (proxy) => ipcRenderer.invoke('check-proxy', proxy),
   deleteProfileFolder: (profileId) => ipcRenderer.invoke('delete-profile-folder', profileId),

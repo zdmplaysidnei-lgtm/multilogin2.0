@@ -1,10 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('nebulaAPI', {
+  getWebviewPreload: () => ipcRenderer.invoke('get-webview-preload'),
   launchProfile: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile', profile, customBrowserPath),
   launchProfileNative: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile-native', profile, customBrowserPath),
-  openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  openPopup: (url, partition) => ipcRenderer.invoke('open-popup', { url, partition }),
+  registerCss: (partition, customCSS) => ipcRenderer.send('register-css', { partition, customCSS }),
+  openExternal: (url) => ipcRenderer.invoke('open-external-url', url),
+  openPopup: (url, partition, customCSS, credentials) => ipcRenderer.invoke('open-popup', { url, partition, customCSS, credentials }),
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   checkProxy: (proxy) => ipcRenderer.invoke('check-proxy', proxy),
   deleteProfileFolder: (profileId) => ipcRenderer.invoke('delete-profile-folder', profileId),
@@ -27,4 +29,9 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
   downloadAndInstallUpdate: (url) => ipcRenderer.invoke('download-and-install-update', url),
   onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (_event, data) => callback(data)),
+  // 🗄️ Database Secura IPC
+  db: {
+    upsertProfile: (profile, secret) => ipcRenderer.invoke('admin-upsert-profile', profile, secret),
+    deleteProfile: (id, secret) => ipcRenderer.invoke('admin-delete-profile', id, secret)
+  }
 });

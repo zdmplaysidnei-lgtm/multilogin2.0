@@ -35,6 +35,24 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
   const cats = (profile.categories || []).filter(c => !c.startsWith('__flag_')).slice(0, 3);
   const launchModeText = profile.launchMode ? profile.launchMode.split(' ')[0] : (profile.useNativeBrowser ? 'Native' : 'Internal');
 
+  const openTutorial = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!profile.videoTutorial) return;
+    let url = profile.videoTutorial.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+    const api = (window as any).nebulaAPI;
+    if (api?.openExternalUrl) {
+      api.openExternalUrl(url).catch(() => window.open(url, '_blank'));
+    } else if (api?.openExternal) {
+      api.openExternal(url).catch(() => window.open(url, '_blank'));
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
   return (
     <div
       draggable={draggable}
@@ -64,7 +82,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       </button>
 
       {/* COVER */}
-      <div className="w-full h-[110px] rounded-[10px] flex items-center justify-center text-[36px] overflow-hidden shrink-0" style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.2), rgba(6,6,18,0.8))' }}>
+      <div className="relative w-full h-[110px] rounded-[10px] flex items-center justify-center text-[36px] overflow-hidden shrink-0" style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.2), rgba(6,6,18,0.8))' }}>
          {profile.coverImage ? (
             <img
                src={profile.coverImage}
@@ -73,6 +91,16 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
             />
          ) : (
             <span>🌐</span>
+         )}
+         {profile.videoTutorial && profile.videoTutorial.trim() !== '' && (
+            <button
+               onClick={openTutorial}
+               className="absolute bottom-2 right-2 z-20 flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/80 hover:bg-[#7c3aed] backdrop-blur-md border border-purple-500/40 text-[#c4b5fd] hover:text-white transition-all cursor-pointer hover:scale-105 text-[9px] font-bold shadow-md"
+               title="Ver Vídeo Tutorial"
+            >
+               <PlayCircle size={11} className="text-[#a78bfa]" />
+               <span>Tutorial</span>
+            </button>
          )}
       </div>
 
@@ -99,16 +127,28 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
          </div>
       </div>
 
-      {/* FOOTER (ABRIR BUTTON) */}
-      <div className="flex gap-1.5 mt-1 z-10">
+      {/* FOOTER (ABRIR BUTTON + INSTRUÇÕES) */}
+      <div className="flex gap-2 mt-1 z-10 items-center">
          <button
             onClick={() => onOpen(profile)}
             disabled={isMaintenance}
-            className="flex-1 p-2 text-white border-none rounded-[8px] text-[11px] font-bold cursor-pointer transition-all hover:opacity-85 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+            className="flex-1 p-2 text-white border-none rounded-[8px] text-[11px] font-bold cursor-pointer transition-all hover:opacity-85 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shadow-md active:scale-95"
             style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)', fontFamily: "'Inter', sans-serif" }}
          >
             {isMaintenance ? 'Indisponível' : 'Abrir'}
          </button>
+
+         {profile.videoTutorial && profile.videoTutorial.trim() !== '' && (
+            <button
+               onClick={openTutorial}
+               title="Ver Instruções / Vídeo Tutorial"
+               className="px-2.5 py-2 rounded-[8px] text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-[#7c3aed]/15 hover:bg-[#7c3aed]/30 text-[#c4b5fd] hover:text-white border border-[#7c3aed]/40 hover:border-[#7c3aed]/70 shadow-sm active:scale-95 shrink-0"
+               style={{ fontFamily: "'Inter', sans-serif" }}
+            >
+               <PlayCircle size={14} className="text-[#a78bfa]" />
+               <span>Instruções</span>
+            </button>
+         )}
       </div>
 
       {/* ADMIN CONTROLS (ONLY SHOWS FOR ADMIN - Hidden in typical UI, but useful if they ever hover and hold admin rights) */}
