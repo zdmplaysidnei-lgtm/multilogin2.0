@@ -48,13 +48,12 @@ const WEBAUTHN_DISABLE_FEATURES = [
 
 // WebAuthn / Passkeys / FIDO suppression - Crucial for Google Login in embedded browsers
 if (app && app.commandLine) {
-    app.commandLine.appendSwitch('disable-features', WEBAUTHN_DISABLE_FEATURES);
-    app.commandLine.appendSwitch('disable-webauthn');
     app.commandLine.appendSwitch('disable-infobars');
     app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 }
 
-const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const SAFARI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
+const CHROME_USER_AGENT = SAFARI_USER_AGENT; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 const SEC_CH_UA = '"Google Chrome";v="141", "Chromium";v="141", "Not_A Brand";v="24"';
 const CHROME_FULL_VERSION = '141.0.7390.107';
 const CHROME_MAJOR_VERSION = '141';
@@ -122,6 +121,11 @@ function configurePartitionSession(ses) {
 
     try {
         ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+            const url = details.url || '';
+            const isGoogleDomain = url.includes('google.com') || url.includes('youtube.com') || url.includes('gstatic.com') || url.includes('googleusercontent.com');
+            if (isGoogleDomain) {
+                return callback({ requestHeaders: details.requestHeaders });
+            }
             if (details.resourceType === 'image' || details.resourceType === 'media' || details.resourceType === 'font' || details.resourceType === 'stylesheet') {
                 return callback({ requestHeaders: details.requestHeaders });
             }
@@ -158,7 +162,8 @@ function configurePartitionSession(ses) {
         ses.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
             const headers = details.responseHeaders || {};
             const url = String(details.url || '').toLowerCase();
-            if (!isCloudflareChallengePage(url)) {
+            const isGoogleDomain = url.includes('google.com') || url.includes('youtube.com') || url.includes('gstatic.com');
+            if (!isCloudflareChallengePage(url) && !isGoogleDomain) {
                 headers['Permissions-Policy'] = ['publickey-credentials-create=(), publickey-credentials-get=()'];
             }
             callback({ responseHeaders: headers });
@@ -1565,6 +1570,21 @@ async function attachCDPDownloadListener(browser) {
 }
 
 function registerIPCHandlers() {
+    ipcMain.handle('clear-google-session', async (event, partition) => {
+        try {
+            if (!partition) return { status: 'error', message: 'Partition missing' };
+            const ses = session.fromPartition(partition);
+            await ses.clearStorageData({
+                origins: ['https://accounts.google.com', 'https://google.com', 'https://www.google.com'],
+                storages: ['cookies', 'localstorage', 'serviceworkers', 'cachestorage']
+            });
+            return { status: 'success' };
+        } catch (err) {
+            console.error('Error clearing google session:', err);
+            return { status: 'error', message: err.message };
+        }
+    });
+
 
     // ========== 🔄 AUTO-UPDATER: VERSÃO DO APP + ABRIR URL EXTERNA ==========
     ipcMain.handle('get-app-version', () => {
@@ -4864,6 +4884,7 @@ app.on('session-created', (ses) => {
 
 registerIPCHandlers();
 app.whenReady().then(() => {
+    app.userAgentFallback = SAFARI_USER_AGENT;
     // 🔥 CORREÇÃO: Só configura o app depois que ele estiver pronto
     app.setMaxListeners(0);
     createMainWindow();

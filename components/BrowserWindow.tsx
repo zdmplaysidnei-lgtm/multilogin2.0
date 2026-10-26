@@ -19,7 +19,7 @@ interface DownloadStatus {
   state: 'downloading' | 'success' | 'error';
 }
 
-const COMPATIBLE_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+const COMPATIBLE_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
 
 export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible, onClose, onTerminate, onToast, blockedUrls = [], onSyncSession }) => {
   const [tabs] = useState<string[]>(profile.urls && profile.urls.length > 0 ? profile.urls : ['https://google.com']);
@@ -919,7 +919,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         </div>
         <div className="flex-1 bg-[#1a1a1a] rounded h-6 flex items-center px-3 text-xs text-gray-400 border border-gray-700 overflow-hidden select-none">
           <Lock size={10} className="mr-2 text-green-500 flex-shrink-0" />
-          <span className="truncate font-black uppercase tracking-tighter text-[9px]">Sessão Criptografada (Chrome 141) — {profile.name} — Aba {activeTabIndex + 1}</span>
+          <span className="truncate font-black uppercase tracking-tighter text-[9px]">Sessão Criptografada — {profile.name} — Aba {activeTabIndex + 1}</span>
         </div>
 
         <div className="flex gap-1">
@@ -972,6 +972,14 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           )}
           <button onClick={() => performCloudSync(true)} disabled={isSyncing} className={`p-1.5 rounded ${isSyncing ? 'text-[#FF6B6B]' : 'text-gray-400 hover:text-white'}`} title="Sincronizar Nuvem">
             <UploadCloud size={16} className={isSyncing ? 'animate-bounce' : ''} />
+          </button>
+          
+          <button
+            onClick={handleClearGoogleSession}
+            className="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-all flex items-center gap-1"
+            title="Destravar / Limpar Sessão Google (se travar em 'Navegador não seguro')"
+          >
+            <ShieldAlert size={16} />
           </button>
           <button onClick={() => setAutoFillEnabled(!autoFillEnabled)} className={`p-1.5 rounded ${autoFillEnabled ? 'text-green-500 bg-green-900/10' : 'text-gray-500'}`} title="Auto-Preenchimento"><Key size={16} /></button>
         </div>
@@ -1044,7 +1052,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         ) : (
           <div className="absolute inset-0 bg-[#0f0f0f] flex flex-col items-center justify-center gap-6">
             <Database className="w-16 h-16 text-[#E50914] animate-pulse" />
-            <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador (Chrome 141)...</h3>
+            <h3 className="text-[#FF6B6B] font-black tracking-widest uppercase text-sm">Blindando Navegador...</h3>
           </div>
         )}
         {isLoading && !isRestoringSession && (

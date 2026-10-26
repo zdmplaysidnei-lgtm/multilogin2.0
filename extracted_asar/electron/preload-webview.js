@@ -3,6 +3,12 @@ const { webFrame } = require('electron');
 const mainWorldScript = `
 (function() {
   if (window.__sidneiAntiDetectInstalled) return;
+
+  // If navigating on Google accounts, do not tamper with credentials to avoid BotGuard attestation failure
+  if (window.location && (window.location.hostname.includes('google.com') || window.location.hostname.includes('youtube.com'))) {
+    return;
+  }
+
   try {
     Object.defineProperty(window, '__sidneiAntiDetectInstalled', { value: true, configurable: false, writable: false });
   } catch(_) {}
