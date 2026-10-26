@@ -21,11 +21,164 @@ interface DownloadStatus {
 
 const COMPATIBLE_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
 
+const getAutofillScript = (email: string = '', password: string = '') => `
+  (function() {
+    var EMAIL_VAL = ${JSON.stringify(email || '')};
+    var PASS_VAL = ${JSON.stringify(password || '')};
+    if (!EMAIL_VAL && !PASS_VAL) return;
+
+    function triggerNativeInput(el, val) {
+      if (!el || !val) return false;
+      try {
+        el.removeAttribute('readonly');
+        el.removeAttribute('disabled');
+        el.readOnly = false;
+        el.disabled = false;
+      } catch (_) {}
+      try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} }
+      
+      var ownerWin = (el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : window;
+      var proto = el.tagName === 'TEXTAREA' ? ownerWin.HTMLTextAreaElement.prototype : ownerWin.HTMLInputElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && typeof desc.set === 'function') {
+        desc.set.call(el, val);
+      } else {
+        el.value = val;
+      }
+
+      try {
+        if (el._valueTracker && typeof el._valueTracker.setValue === 'function') {
+          el._valueTracker.setValue('');
+        }
+      } catch (_) {}
+
+      try {
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: val }));
+      } catch (_) {}
+      try {
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: val }));
+      } catch (_) {
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      }
+      try {
+        el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      } catch (_) {}
+      try {
+        el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter' }));
+      } catch (_) {}
+      return el.value === val;
+    }
+
+    function isVisible(el) {
+      if (!el || !el.isConnected) return false;
+      var rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return false;
+      var style = window.getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    }
+
+    function getInputs() {
+      var list = [];
+      function scan(root) {
+        if (!root) return;
+        try {
+          var found = root.querySelectorAll('input, textarea');
+          for (var i = 0; i < found.length; i++) list.push(found[i]);
+        } catch (_) {}
+        try {
+          var iframes = root.querySelectorAll('iframe');
+          for (var j = 0; j < iframes.length; j++) {
+            try {
+              if (iframes[j].contentDocument) scan(iframes[j].contentDocument);
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      scan(document);
+      return list;
+    }
+
+    function isEmailField(el) {
+      if (!el) return false;
+      if (el.type === 'email') return true;
+      var attr = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('autocomplete') || '')).toLowerCase();
+      return el.id === 'identifierId' || attr.includes('identifier') || attr.includes('email') || attr.includes('login') || attr.includes('user') || attr.includes('usuario');
+    }
+
+    function isPasswordField(el) {
+      if (!el) return false;
+      if (el.type === 'password') return true;
+      var attr = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('autocomplete') || '')).toLowerCase();
+      return el.name === 'Passwd' || attr.includes('password') || attr.includes('senha') || attr.includes('passwd') || attr.includes('pwd');
+    }
+
+    function showAutofillToast() {
+      if (window.__nebula_toast_shown) return;
+      window.__nebula_toast_shown = true;
+      try {
+        var host = document.createElement('div');
+        host.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
+        host.innerHTML = '<div style="display:inline-flex;gap:12px;align-items:center;background:linear-gradient(135deg,#062c1d,#0b3a26);color:#fff;padding:10px 18px;border-radius:14px;box-shadow:0 18px 40px rgba(0,0,0,.5),0 0 0 1px rgba(16,185,129,.4);"><span style="width:26px;height:26px;border-radius:8px;background:#10b981;display:inline-flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:bold;">✓</span><div><div style="font-weight:800;font-size:12px;letter-spacing:0.3px;">Preenchimento automático</div><div style="font-size:11px;color:#34d399;">Dados de login inseridos com sucesso</div></div></div>';
+        (document.body || document.documentElement).appendChild(host);
+        setTimeout(function() { host.remove(); }, 3500);
+      } catch (_) {}
+    }
+
+    function runAutofill() {
+      var allInputs = getInputs();
+      for (var i = 0; i < allInputs.length; i++) {
+        var input = allInputs[i];
+        if (!isVisible(input)) continue;
+
+        if (EMAIL_VAL && isEmailField(input) && !isPasswordField(input)) {
+          if (!input.value || input.value !== EMAIL_VAL) {
+            triggerNativeInput(input, EMAIL_VAL);
+          }
+        }
+
+        if (PASS_VAL && isPasswordField(input)) {
+          if (!input.value || input.value !== PASS_VAL) {
+            triggerNativeInput(input, PASS_VAL);
+            showAutofillToast();
+          }
+          if (input.type !== 'password') input.type = 'password';
+        }
+      }
+    }
+
+    runAutofill();
+    if (!window.__nebula_autofill_interval) {
+      window.__nebula_autofill_interval = setInterval(runAutofill, 500);
+    }
+
+    try {
+      if (!window.__nebula_autofill_obs) {
+        window.__nebula_autofill_obs = new MutationObserver(function() {
+          runAutofill();
+        });
+        window.__nebula_autofill_obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      }
+    } catch (_) {}
+  })();
+`;
+
 export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible, onClose, onTerminate, onToast, blockedUrls = [], onSyncSession }) => {
   const [tabs] = useState<string[]>(profile.urls && profile.urls.length > 0 ? profile.urls : ['https://google.com']);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [isMaximized, setIsMaximized] = useState(false);
   const [webviewPreloadUrl, setWebviewPreloadUrl] = useState<string>('');
+
+  const handleTriggerAutofill = async () => {
+    setAutoFillEnabled(true);
+    const activeWebview = webviewRefs.current[activeTabIndex];
+    if (activeWebview && (profile.email || profile.password)) {
+      try {
+        await activeWebview.executeJavaScript(getAutofillScript(profile.email, profile.password));
+        if (onToast) onToast('E-mail e senha preenchidos!', 'success');
+      } catch (_) {}
+    }
+  };
 
   const handleClearGoogleSession = async () => {
     if (!window.nebulaAPI?.clearGoogleSession) return;
@@ -468,6 +621,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           input[name="Passwd"], input[type="password"], input[autocomplete*="password"],
           input[name*="password" i], input[name*="senha" i], input[id*="password" i], input[id*="senha" i] {
             -webkit-text-security: disc !important;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
           }
 
           div[jsname="ipZ2Me"], div[class*="VfPpkd-mpDnFf"], div[class*="VfPpkd-dgl2Hf"],
@@ -482,7 +638,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           button[class*="eye"], .reveal-password, [class*="PasswordToggle"],
           button[aria-label*="senha"], button[aria-label*="password"], 
           .toggle-password, i[class*="eye"], [data-testid*="eye"], [aria-label*="Show password"],
-          [aria-label*="senha" i], [aria-label*="password" i], [aria-label*="mostrar" i], [aria-label*="show" i],
+          button[aria-label*="senha" i], button[aria-label*="password" i], button[aria-label*="mostrar" i], button[aria-label*="show" i],
+          div[role="button"][aria-label*="mostrar" i], div[role="button"][aria-label*="senha" i],
+          span[role="button"][aria-label*="mostrar" i], span[role="button"][aria-label*="senha" i],
           button[title*="senha" i], button[title*="password" i],
           input[type="password"] ~ button, input[type="password"] ~ span, input[type="password"] ~ div:has(button) { 
               display: none !important; 
@@ -688,210 +846,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
         // 🔥 MOTOR DE AUTO-PREENCHIMENTO MULTI-ETAPAS (COMPATÍVEL COM GOOGLE ACCOUNTS, REACT, VUE, SPAS)
         if (autoFillEnabled && (profile.email || profile.password)) {
-          const autofillScript = `
-            (function() {
-              var EMAIL_VALUE = ${JSON.stringify(profile.email || '')};
-              var PASSWORD_VALUE = ${JSON.stringify(profile.password || '')};
-
-              var EMAIL_SELECTORS = [
-                'input#identifierId',
-                'input[name="identifier"]',
-                'input[type="email"]',
-                'input[inputmode="email"]',
-                'input[autocomplete="email"]',
-                'input[autocomplete="username"]',
-                'input[autocomplete="tel"]',
-                'input[name*="email" i]',
-                'input[name*="mail" i]',
-                'input[name*="user" i]',
-                'input[name*="login" i]',
-                'input[name*="identifier" i]',
-                'input[name*="usuario" i]',
-                'input[name*="cpf" i]',
-                'input[name*="document" i]',
-                'input[name*="account" i]',
-                'input[id*="email" i]',
-                'input[id*="mail" i]',
-                'input[id*="user" i]',
-                'input[id*="login" i]',
-                'input[id*="identifier" i]',
-                'input[id*="cpf" i]',
-                'input[aria-label*="e-mail" i]',
-                'input[aria-label*="email" i]',
-                'input[aria-label*="usu" i]',
-                'input[aria-label*="login" i]',
-                'input[aria-label*="telefone" i]',
-                'input[placeholder*="e-mail" i]',
-                'input[placeholder*="email" i]',
-                'input[placeholder*="usu" i]',
-                'input[placeholder*="login" i]',
-                'input[placeholder*="telefone" i]',
-                'input[placeholder*="cpf" i]',
-                'input[type="tel"]'
-              ];
-
-              var PASSWORD_SELECTORS = [
-                'input[type="password"]',
-                'input[name="Passwd"]',
-                'input[autocomplete="current-password"]',
-                'input[autocomplete="new-password"]',
-                'input[name*="password" i]',
-                'input[name*="senha" i]',
-                'input[name*="passwd" i]',
-                'input[name*="pwd" i]',
-                'input[id*="password" i]',
-                'input[id*="senha" i]',
-                'input[id*="passwd" i]',
-                'input[id*="pwd" i]',
-                'input[aria-label*="senha" i]',
-                'input[aria-label*="password" i]',
-                'input[placeholder*="senha" i]',
-                'input[placeholder*="password" i]',
-                'input[placeholder*="sua senha" i]'
-              ];
-
-              function isVisible(field) {
-                if (!field || field.disabled || !field.isConnected) return false;
-                var rect = field.getBoundingClientRect();
-                var styles = window.getComputedStyle(field);
-                return rect.width > 0 && rect.height > 0 && styles.visibility !== 'hidden' && styles.display !== 'none';
-              }
-
-              function listSearchRoots(root) {
-                var roots = [];
-                var seen = [];
-                function visit(node) {
-                  if (!node || seen.indexOf(node) !== -1) return;
-                  seen.push(node);
-                  if (typeof node.querySelectorAll === 'function') roots.push(node);
-                  var elements = node.children ? Array.prototype.slice.call(node.children) : [];
-                  elements.forEach(function(el) {
-                    if (el.shadowRoot) visit(el.shadowRoot);
-                    if (el.tagName === 'IFRAME') { try { if (el.contentDocument) visit(el.contentDocument); } catch (_) {} }
-                  });
-                }
-                visit(root || document);
-                return roots;
-              }
-
-              function queryAllDeep(selectors) {
-                var matches = [], seen = [];
-                listSearchRoots(document).forEach(function(root) {
-                  selectors.forEach(function(sel) {
-                    try {
-                      Array.prototype.slice.call(root.querySelectorAll(sel)).forEach(function(el) {
-                        if (seen.indexOf(el) === -1) { seen.push(el); matches.push(el); }
-                      });
-                    } catch (_) {}
-                  });
-                });
-                return matches;
-              }
-
-              function findField(selectors) {
-                return queryAllDeep(selectors).find(function(f) { return isVisible(f); }) || null;
-              }
-
-              function setNativeValue(field, value, previousValue) {
-                var ownerWindow = field && field.ownerDocument && field.ownerDocument.defaultView ? field.ownerDocument.defaultView : window;
-                var proto = field.tagName === 'TEXTAREA'
-                  ? ownerWindow.HTMLTextAreaElement.prototype
-                  : ownerWindow.HTMLInputElement.prototype;
-                var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-                if (desc && typeof desc.set === 'function') desc.set.call(field, value);
-                else field.value = value;
-                try { field.setAttribute('value', value); } catch (_) {}
-                try {
-                  if (field._valueTracker && typeof field._valueTracker.setValue === 'function') {
-                    field._valueTracker.setValue(String(previousValue || ''));
-                  }
-                } catch (_) {}
-              }
-
-              function setValue(field, value) {
-                if (!field) return false;
-                try {
-                  field.removeAttribute('readonly');
-                  field.removeAttribute('disabled');
-                  field.readOnly = false;
-                  field.disabled = false;
-                } catch (_) {}
-                try { field.focus({ preventScroll: true }); } catch (_) { try { field.focus(); } catch (_) {} }
-                try { field.select && field.select(); } catch (_) {}
-                var previousValue = String(field.value || '');
-                setNativeValue(field, value, previousValue);
-                try {
-                  if (typeof field.setSelectionRange === 'function') {
-                    field.setSelectionRange(String(value).length, String(value).length);
-                  }
-                } catch (_) {}
-                try {
-                  field.dispatchEvent(new InputEvent('beforeinput', {
-                    bubbles: true,
-                    cancelable: true,
-                    data: String(value),
-                    inputType: previousValue ? 'insertReplacementText' : 'insertText',
-                  }));
-                } catch (_) {}
-                try {
-                  field.dispatchEvent(new InputEvent('input', {
-                    bubbles: true,
-                    composed: true,
-                    data: String(value),
-                    inputType: previousValue ? 'insertReplacementText' : 'insertText',
-                  }));
-                } catch (_) {
-                  field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-                }
-                try { field.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (_) {}
-                return String(field.value || '').trim() === String(value || '').trim();
-              }
-
-              function showAutofillToast() {
-                if (window.__cb_autofill_toast_shown) return;
-                window.__cb_autofill_toast_shown = true;
-                try {
-                  var host = document.createElement('div');
-                  host.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
-                  var t = document.createElement('div');
-                  t.style.cssText = 'display:inline-flex;gap:12px;align-items:center;background:linear-gradient(135deg,#062c1d,#0b3a26);color:#fff;padding:10px 18px;border-radius:14px;box-shadow:0 18px 40px rgba(0,0,0,.5),0 0 0 1px rgba(16,185,129,.4);';
-                  t.innerHTML = '<span style="width:26px;height:26px;border-radius:8px;background:#10b981;display:inline-flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:bold;">✓</span><div><div style="font-weight:800;font-size:12px;letter-spacing:0.3px;">E-mail e senha preenchidos automaticamente</div><div style="font-size:11px;color:#34d399;">Tudo pronto — clique em Fazer Login para acessar</div></div>';
-                  host.appendChild(t);
-                  (document.body || document.documentElement).appendChild(host);
-                  setTimeout(function(){ host.remove(); }, 4000);
-                } catch (_) {}
-              }
-
-              var emailDone = false;
-              var passwordDone = false;
-
-              function tryFill() {
-                if (EMAIL_VALUE && !emailDone) {
-                  var emailField = findField(EMAIL_SELECTORS);
-                  if (emailField && (!emailField.value || emailField.value !== EMAIL_VALUE)) {
-                    if (setValue(emailField, EMAIL_VALUE)) {
-                      emailDone = true;
-                    }
-                  }
-                }
-
-                if (PASSWORD_VALUE && !passwordDone) {
-                  var passwordField = findField(PASSWORD_SELECTORS);
-                  if (passwordField && (!passwordField.value || passwordField.value !== PASSWORD_VALUE)) {
-                    if (setValue(passwordField, PASSWORD_VALUE)) {
-                      passwordDone = true;
-                      showAutofillToast();
-                    }
-                  }
-                }
-              }
-
-              tryFill();
-              var fillInterval = setInterval(tryFill, 400);
-              setTimeout(function() { clearInterval(fillInterval); }, 45000);
-            })();
-          `;
-          webview.executeJavaScript(autofillScript);
+          webview.executeJavaScript(getAutofillScript(profile.email, profile.password)).catch(() => {});
         }
       };
 
@@ -919,6 +874,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         if (idx === activeTabIndex) {
           setIsLoading(false);
           performCloudSync();
+          if (autoFillEnabled && (profile.email || profile.password)) {
+            webview.executeJavaScript(getAutofillScript(profile.email, profile.password)).catch(() => {});
+          }
         }
       });
       webview.addEventListener('new-window', (e: any) => {
@@ -1075,7 +1033,15 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           >
             <ShieldAlert size={16} />
           </button>
-          <button onClick={() => setAutoFillEnabled(!autoFillEnabled)} className={`p-1.5 rounded ${autoFillEnabled ? 'text-green-500 bg-green-900/10' : 'text-gray-500'}`} title="Auto-Preenchimento"><Key size={16} /></button>
+          <button
+            onClick={handleTriggerAutofill}
+            className={`p-1.5 rounded transition-all flex items-center gap-1 ${
+              autoFillEnabled ? 'text-green-400 bg-green-900/20 hover:bg-green-900/40' : 'text-gray-500 hover:text-white'
+            }`}
+            title="Preencher E-mail e Senha (ou clique para forçar preenchimento)"
+          >
+            <Key size={16} />
+          </button>
         </div>
       </div>
 
