@@ -203,15 +203,6 @@ const App: React.FC = () => {
       }
    }, []);
 
-   // 🔥 GRAVAR SESSÃO: Abre a ferramenta e orienta o Admin a salvar no Supabase
-   const handleCaptureNativeSession = useCallback(async (profile: Profile) => {
-      setToast({
-         msg: `🚀 Abrindo ${profile.name}. Faça o login na ferramenta e clique no botão verde "Salvar Sessão no Supabase" no topo para gravar!`,
-         type: 'info'
-      });
-      handleLaunchProfile(profile);
-   }, [handleLaunchProfile]);
-
    const [currentAdIndex, setCurrentAdIndex] = useState(0);
    const [toast, setToast] = useState<{ title?: string; msg: string; type: 'success' | 'error' | 'info' } | null>(null);
    const [loginForm, setLoginForm] = useState({ email: '', password: '', remember: false });
