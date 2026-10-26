@@ -70,6 +70,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
   // TRAVA DE 60 SEGUNDOS - REFERÊNCIA DE TEMPO
   const lastSyncTimeRef = useRef<number>(0);
+  const lastAutoClearRef = useRef<number>(0);
 
   useEffect(() => {
     if (profile && lastProfileId.current === profile.id) return;
@@ -435,32 +436,32 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
         // 🔥 INJETAR LOCALSTORAGE DO PERFIL PARA MANTER SESSÃO (EX: HAILUO, MINIMAX)
         if (profile.localStorage && profile.localStorage.trim().startsWith('{')) {
-           const injectLsScript = `
-             (function() {
-               if (!sessionStorage.getItem('nebula_ls_injected')) {
-                 try {
-                   const safeLsString = JSON.stringify(profile.localStorage);
-                   var rawLs = ${safeLsString};
-                   var lsData = JSON.parse(rawLs);
-                   // Limpar chaves poluidas formato CDP multi-origin (0,1,2,3)
-                   for (var _i = localStorage.length - 1; _i >= 0; _i--) {
-                     var _k = localStorage.key(_i);
-                     if (_k && /^\d+$/.test(_k)) { try { var _v = JSON.parse(localStorage.getItem(_k)); if (_v && _v.origin && Array.isArray(_v.localStorage)) { localStorage.removeItem(_k); } } catch(_e) {} }
-                   }
-                   let injected = false;
-                   for (const key in lsData) {
-                     if (!localStorage.getItem(key) || localStorage.getItem(key) !== lsData[key]) {
-                       localStorage.setItem(key, lsData[key]);
-                       injected = true;
-                     }
-                   }
-                   sessionStorage.setItem('nebula_ls_injected', 'true');
-                   if (injected) { console.log('[Nebula] LS injetado, recarregando...'); window.location.reload(); }
-                 } catch (e) { console.error('Erro ao injetar LS', e); }
-               }
-             })();
-           `;
-           webview.executeJavaScript(injectLsScript);
+          const safeLsString = JSON.stringify(profile.localStorage);
+          const injectLsScript = `
+            (function() {
+              if (!sessionStorage.getItem('nebula_ls_injected')) {
+                try {
+                  var rawLs = ${safeLsString};
+                  var lsData = typeof rawLs === 'string' ? JSON.parse(rawLs) : rawLs;
+                  // Limpar chaves poluidas formato CDP multi-origin (0,1,2,3)
+                  for (var _i = localStorage.length - 1; _i >= 0; _i--) {
+                    var _k = localStorage.key(_i);
+                    if (_k && /^\\d+\$/.test(_k)) { try { var _v = JSON.parse(localStorage.getItem(_k)); if (_v && _v.origin && Array.isArray(_v.localStorage)) { localStorage.removeItem(_k); } } catch(_e) {} }
+                  }
+                  let injected = false;
+                  for (const key in lsData) {
+                    if (!localStorage.getItem(key) || localStorage.getItem(key) !== lsData[key]) {
+                      localStorage.setItem(key, lsData[key]);
+                      injected = true;
+                    }
+                  }
+                  sessionStorage.setItem('nebula_ls_injected', 'true');
+                  if (injected) { console.log('[Nebula] LS injetado, recarregando...'); window.location.reload(); }
+                } catch (e) { console.error('Erro ao injetar LS', e); }
+              }
+            })();
+          `;
+          try { webview.executeJavaScript(injectLsScript).catch(() => {}); } catch(_) {}
         }
 
         webview.insertCSS(`
@@ -897,11 +898,20 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       webview.addEventListener('dom-ready', handleDomReady);
       webview.addEventListener('did-navigate', (e: any) => {
         const navUrl = e.url || '';
-        if (navUrl.includes('signin/rejected') || navUrl.includes('rrk=46')) {
-          console.warn('[Google Sign-In] Rejeição detectada. Destravando partição automaticamente...');
-          window.nebulaAPI?.clearGoogleSession?.("persist:" + profile.id).then(() => {
-            webview.loadURL('https://accounts.google.com');
-          });
+        if (
+          navUrl.includes('signin/rejected') ||
+          navUrl.includes('rrk=46') ||
+          navUrl.includes('CookieMismatch') ||
+          navUrl.includes('answer/61416')
+        ) {
+          if (Date.now() - lastAutoClearRef.current > 10000) {
+            lastAutoClearRef.current = Date.now();
+            console.warn('[Google Sign-In] Rejeição ou CookieMismatch detectado. Destravando partição automaticamente...');
+            window.nebulaAPI?.clearGoogleSession?.("persist:" + profile.id).then(() => {
+              const targetUrl = (profile.urls && profile.urls[idx]) ? profile.urls[idx] : 'https://accounts.google.com';
+              webview.loadURL(targetUrl);
+            });
+          }
         }
       });
       webview.addEventListener('did-start-loading', () => { if (idx === activeTabIndex) setIsLoading(true); });
