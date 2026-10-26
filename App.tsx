@@ -717,6 +717,15 @@ const App: React.FC = () => {
       setLaunchingStatus({ isLaunching: false, message: '' });
    };
 
+   // 🔥 GRAVAR SESSÃO: Abre a ferramenta e orienta o Admin a salvar no Supabase
+   const handleCaptureNativeSession = (profile: Profile) => {
+      setToast({
+         msg: `🚀 Abrindo ${profile.name}. Faça o login na ferramenta e clique no botão verde "Salvar Sessão no Supabase" no topo para gravar!`,
+         type: 'info'
+      });
+      handleLaunchProfile(profile);
+   };
+
    const handleSaveNewUser = async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       setIsSaving(true);
