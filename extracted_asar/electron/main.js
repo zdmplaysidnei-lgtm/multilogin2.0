@@ -53,7 +53,7 @@ if (app && app.commandLine) {
 }
 
 const SAFARI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
-const CHROME_USER_AGENT = SAFARI_USER_AGENT; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const CHROME_USER_AGENT = SAFARI_USER_AGENT;
 const SEC_CH_UA = '"Google Chrome";v="141", "Chromium";v="141", "Not_A Brand";v="24"';
 const CHROME_FULL_VERSION = '141.0.7390.107';
 const CHROME_MAJOR_VERSION = '141';
@@ -131,8 +131,6 @@ function configurePartitionSession(ses) {
             }
 
             const headers = { ...details.requestHeaders };
-
-            const url = details.url || '';
             if (url.includes('cdn1.suno.') || url.includes('cdn2.suno.') || url.includes('suno.ai') || url.includes('suno.com')) {
                 headers['Referer'] = 'https://suno.com/';
                 headers['Origin'] = 'https://suno.com';
