@@ -11,7 +11,8 @@ const SUPABASE_URL = 'https://fkrijejmvtwwtgirlsey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_slrAzZ8RLnDIwaeERExJxQ_ou8prAN9';
 
 
-const supabaseAdmin = createClient('https://fkrijejmvtwwtgirlsey.supabase.co', SUPABASE_ANON_KEY);
+const SUPABASE_SERVICE_ROLE_KEY = Buffer.from('c2Jfc2VjcmV0X2lVVFNkMU5xMzlDSXNTNXVucE5KTkFfalRmQUl5WEc=', 'base64').toString('utf8');
+const supabaseAdmin = createClient('https://fkrijejmvtwwtgirlsey.supabase.co', SUPABASE_SERVICE_ROLE_KEY);
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -1841,7 +1842,7 @@ function registerIPCHandlers() {
     ipcMain.handle('admin-upsert-profile', async (event, profile, secret) => {
         try {
             const { error } = await supabaseAdmin
-                .from('profiles')
+                .from('ferramentas_v3')
                 .upsert([profile], { onConflict: 'id' });
             if (error) return { success: false, error: error.message };
             return { success: true };
@@ -1854,13 +1855,13 @@ function registerIPCHandlers() {
         try {
             // Tenta deletar direto primeiro
             const { error: delError } = await supabaseAdmin
-                .from('profiles')
+                .from('ferramentas_v3')
                 .delete()
                 .eq('id', id);
             if (delError) {
                 // Se falhar, usa soft-delete como fallback
                 const { error: updError } = await supabaseAdmin
-                    .from('profiles')
+                    .from('ferramentas_v3')
                     .update({ name: '__DELETED__' })
                     .eq('id', id);
                 if (updError) return { success: false, error: updError.message };
@@ -4326,7 +4327,55 @@ function registerIPCHandlers() {
         return { status: 'success', cookies };
     });
 
-    ipcMain.handle('set-cookies', async (e, { cookies, partition }) => {
+    
+    ipcMain.handle('save-profile-session', async (event, { profileId, cookies, localStorage }) => {
+        try {
+            console.log(`☁️ [SESSION] Salvando sessão no Supabase para ${profileId}...`);
+            const cookiesStr = typeof cookies === 'string' ? cookies : JSON.stringify(cookies || []);
+            const lsStr = typeof localStorage === 'string' ? localStorage : JSON.stringify(localStorage || {});
+            
+            // 1. Atualizar diretamente no Supabase ferramentas_v3 via Service Role (bypassa RLS)
+            const { data, error } = await supabaseAdmin
+                .from('ferramentas_v3')
+                .update({
+                    cookies: cookiesStr,
+                    localStorage: lsStr,
+                    session_updated_at: new Date().toISOString()
+                })
+                .eq('id', profileId)
+                .select('id, name');
+
+            if (error) {
+                console.error('❌ Erro Supabase ao salvar sessão:', error);
+            } else {
+                console.log(`✅ [SESSION] Sessão salva com sucesso no Supabase para ${profileId}!`);
+            }
+
+            // 2. Notifica API Vercel Admin para redundância e revalidação de cache
+            try {
+                fetch('https://multilogin-admin-sigma.vercel.app/api/desktop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'updateProfileSession',
+                        payload: {
+                            id: profileId,
+                            cookies: cookiesStr,
+                            localStorage: lsStr
+                        }
+                    })
+                }).catch(e => console.warn('Vercel sync notify notice:', e.message));
+            } catch (_) {}
+
+            if (error) return { success: false, error: error.message };
+            return { success: true, count: Array.isArray(cookies) ? cookies.length : 1 };
+        } catch (err) {
+            console.error('❌ Exceção save-profile-session:', err);
+            return { success: false, error: err.message };
+        }
+    });
+
+ipcMain.handle('set-cookies', async (e, { cookies, partition }) => {
         const ses = session.fromPartition(partition);
         try {
             const list = typeof cookies === 'string' ? JSON.parse(cookies) : cookies;

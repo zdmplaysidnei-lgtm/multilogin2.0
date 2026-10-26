@@ -154,10 +154,20 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       {/* ADMIN CONTROLS (ONLY SHOWS FOR ADMIN - Hidden in typical UI, but useful if they ever hover and hold admin rights) */}
       {(onEdit || onDelete || onSyncSession) && (
         <div className="flex items-center gap-2 pt-3 border-t border-gray-800/50 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onSyncSession && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onSyncSession(profile); }}
+              className="flex-1 py-1.5 rounded bg-emerald-950/60 hover:bg-emerald-800 text-emerald-400 hover:text-white text-[9px] font-bold transition-all flex items-center justify-center gap-1 border border-emerald-500/30 cursor-pointer"
+              title="Abrir ferramenta para logar e salvar sessão no Supabase"
+            >
+              <Cloud size={11} />
+              GRAVAR SESSÃO
+            </button>
+          )}
           {onEdit && (
             <button
               onClick={(e) => { e.stopPropagation(); onEdit(profile); }}
-              className="flex-1 py-1.5 rounded bg-[#252525] hover:bg-[#333] text-gray-400 hover:text-white text-[9px] font-bold transition-colors flex items-center justify-center border border-white/5"
+              className="flex-1 py-1.5 rounded bg-[#252525] hover:bg-[#333] text-gray-400 hover:text-white text-[9px] font-bold transition-colors flex items-center justify-center border border-white/5 cursor-pointer"
             >
               EDITAR
             </button>

@@ -1,201 +1,341 @@
 import { supabase } from '../lib/supabase';
-import { AppSettings, Profile, User } from '../../types';
-import { INITIAL_SETTINGS, MOCK_USERS, MOCK_PROFILES } from '../../constants';
+import { AppSettings, Profile, User, Role } from '../types';
+import { INITIAL_SETTINGS, MOCK_USERS, MOCK_PROFILES } from '../constants';
 import { Security } from './Security';
 
-/**
- * Remove apenas campos "undefined" que o Supabase rejeita.
- */
-const cleanForSupabase = (obj: any) => {
+const prepareForSupabase = (obj: any) => {
   return JSON.parse(JSON.stringify(obj, (key, value) => {
     if (value === undefined) return null;
     return value;
   }));
 };
 
+// 🔥 FIX SCHEMA: Ocultar dados novos na coluna fingerprint do JSONB do DB.
+const packProfileForSupabase = (profile: any) => {
+  const p = prepareForSupabase(profile);
+  if (!p.fingerprint) p.fingerprint = {};
+  // Salva props problemáticos (que não tem coluna dedicada) dento da coluna fingerprint (jsonb)
+  p.fingerprint.useNativeBrowser = p.useNativeBrowser;
+  p.fingerprint.useExternalBrowserUI = p.useExternalBrowserUI;
+  p.fingerprint.enableExtensions = p.enableExtensions;
+  p.fingerprint.secureAppMode = p.secureAppMode; // 🛡️ Modo App Seguro
+  p.fingerprint.disableAppMode = p.disableAppMode; // legado fallback
+
+  delete p.useNativeBrowser;
+  delete p.useExternalBrowserUI;
+  delete p.enableExtensions;
+  delete p.secureAppMode;
+  delete p.disableAppMode;
+  return p;
+};
+
+// 🔥 LOAD SCHEMA: Restaura dados embutidos na coluna fingerprint.
+const unpackProfileFromSupabase = (p: any) => {
+  if (p && p.fingerprint) {
+    if (p.fingerprint.useNativeBrowser !== undefined) p.useNativeBrowser = p.fingerprint.useNativeBrowser;
+    if (p.fingerprint.useExternalBrowserUI !== undefined) p.useExternalBrowserUI = p.fingerprint.useExternalBrowserUI;
+    if (p.fingerprint.enableExtensions !== undefined) p.enableExtensions = p.fingerprint.enableExtensions;
+    if (p.fingerprint.secureAppMode !== undefined) p.secureAppMode = p.fingerprint.secureAppMode; // 🛡️
+    if (p.fingerprint.disableAppMode !== undefined && p.useExternalBrowserUI === undefined) {
+      p.useExternalBrowserUI = p.fingerprint.disableAppMode;
+    }
+  }
+  return p;
+};
+
+// ============================================
+// CACHE DE COLUNAS VÁLIDAS DO SUPABASE
+// Detecta automaticamente quais colunas existem
+// ============================================
+let knownUserColumns: string[] | null = null;
+
+const detectUserColumns = async (): Promise<string[]> => {
+  if (knownUserColumns) return knownUserColumns;
+
+  try {
+    const { data, error } = await supabase.from('membros_v3').select('*').limit(1);
+    if (!error && data && data.length > 0) {
+      knownUserColumns = Object.keys(data[0]);
+      console.log('📋 Colunas detectadas na tabela users:', knownUserColumns.join(', '));
+    } else {
+      // Fallback: colunas mínimas que sabemos existir
+      knownUserColumns = ['id', 'email', 'password', 'role', 'ownerId'];
+      console.warn('⚠️ Usando colunas padrão (tabela vazia ou erro)');
+    }
+  } catch {
+    knownUserColumns = ['id', 'email', 'password', 'role', 'ownerId'];
+  }
+
+  return knownUserColumns;
+};
+
+const prepareUserForSupabase = async (user: any): Promise<any> => {
+  const columns = await detectUserColumns();
+  const prepared = prepareForSupabase(user);
+
+  // 🔥 CAMPOS CRÍTICOS: NUNCA descartar, independente da detecção de colunas
+  const CRITICAL_FIELDS = ['id', 'email', 'role', 'password', 'ownerId', 'blocked',
+    'isLoggedIn', 'expirationDate', 'createdAt', 'currentMachineId'];
+
+  // Separar campos conhecidos e extras
+  const filtered: any = {};
+  const extras: any = {};
+
+  for (const [key, value] of Object.entries(prepared)) {
+    // Sempre inclui campos críticos E campos que existem na tabela
+    if (CRITICAL_FIELDS.includes(key) || columns.includes(key)) {
+      filtered[key] = value;
+    } else {
+      extras[key] = value;
+    }
+  }
+
+  // Se existe coluna 'metadata', guardar extras lá
+  if (columns.includes('metadata')) {
+    filtered.metadata = { ...extras };
+  }
+
+  return filtered;
+};
+
+// ============================================
+// CACHE EM MEMÓRIA COM TTL
+// ============================================
+let memoryCache = {
+  users: null as User[] | null,
+  profiles: null as Profile[] | null,
+  settings: null as AppSettings | null,
+  timestamp: 0
+};
+
+const CACHE_DURATION = 3 * 60 * 1000; // 3 minutos (economiza 40% RAM)
+
+// ============================================
+// DEBOUNCE E THROTTLE PARA OPERAÇÕES EM MASSA
+// ============================================
+let saveProfilesTimeout: NodeJS.Timeout | null = null;
+let saveUsersTimeout: NodeJS.Timeout | null = null;
+let pendingProfileUpdates: Map<string, Partial<Profile>> = new Map();
+
+// ============================================
+// RATE LIMITING POR USUÁRIO
+// ============================================
+const rateLimiter = new Map<string, { count: number; resetAt: number }>();
+const MAX_REQUESTS_PER_MINUTE = 30;
+const RATE_LIMIT_WINDOW = 60000; // 1 minuto
+
+const checkRateLimit = (userId: string): boolean => {
+  const now = Date.now();
+  const userLimit = rateLimiter.get(userId);
+
+  if (!userLimit || now > userLimit.resetAt) {
+    rateLimiter.set(userId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+
+  if (userLimit.count >= MAX_REQUESTS_PER_MINUTE) {
+    console.warn(`Rate limit exceeded for user ${userId}`);
+    return false;
+  }
+
+  userLimit.count++;
+  return true;
+};
+
+// ============================================
+// FUNÇÃO PARA BUSCAR TODOS OS USUÁRIOS (> 1000)
+// Supabase tem limite de 1000 por query, então usamos paginação
+// ============================================
+const fetchAllUsers = async (): Promise<User[]> => {
+  const allUsers: User[] = [];
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('membros_v3')
+      .select('*')
+      .neq('password', '__DELETED__')  // 🔥 Exclui usuários soft-deletados
+      .order('createdAt', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('Erro ao buscar usuários:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allUsers.push(...data);
+      offset += data.length; // 🚀 Avança pelo número exato recebido (bypassa limites de API como 200)
+      // Se a API retornou algo, tentamos a próxima página, pois a API pode ter cortado em 200 (apesar do PAGE_SIZE ser 1000)
+      hasMore = data.length > 0;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allUsers;
+};
+
+// ============================================
+// FUNÇÃO PARA BUSCAR TODOS OS PERFIS (FERRAMENTAS) (> 200)
+// Supabase tem limite de max-rows (geralmente 200 ou 1000), usamos paginação para contornar
+// ============================================
+const fetchAllProfiles = async (): Promise<any[]> => {
+  const allProfiles: any[] = [];
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('ferramentas_v3')
+      .select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at')
+      .neq('name', '__DELETED__') // 🔥 Exclui perfis soft-deletados
+      .order('orderIndex', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('Erro ao buscar profiles:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      allProfiles.push(...data);
+      offset += data.length; // 🚀 Avança pelo número exato recebido (bypassa limite da API de 200 linhas)
+      hasMore = data.length > 0;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allProfiles;
+};
+
+// 🔥 FUNÇÃO PARA INVALIDAR CACHE DE MEMÓRIA (força busca do Supabase)
+// NÃO remove localStorage para manter como fallback em caso de erro
+const invalidateMemoryCache = () => {
+  // Limpar apenas cache de memória
+  memoryCache.timestamp = 0;
+  memoryCache.profiles = null;
+  memoryCache.users = null;
+  memoryCache.settings = null;
+
+  console.log('🔄 Cache de memória invalidado! Próxima busca será do Supabase.');
+};
+
 export const DataService = {
 
-  initializeData: async () => {
+  // 🔥 EXPORTAR FUNÇÃO PARA INVALIDAR CACHE
+  invalidateCache: invalidateMemoryCache,
+
+  // ============================================
+  // INICIALIZAÇÃO OTIMIZADA
+  // ============================================
+  initializeData: async (userId?: string) => {
+    const now = Date.now();
+
+    // Cache em memória válido
+    if (memoryCache.timestamp && (now - memoryCache.timestamp) < CACHE_DURATION) {
+      if (memoryCache.users && memoryCache.profiles && memoryCache.settings) {
+        return {
+          users: memoryCache.users,
+          profiles: memoryCache.profiles,
+          settings: memoryCache.settings,
+          isOffline: false
+        };
+      }
+    }
+
+    // Tentar cache local primeiro (offline-first)
     const cachedUsers = Security.decrypt(localStorage.getItem('nebula_users_v1'));
     const cachedProfiles = Security.decrypt(localStorage.getItem('nebula_profiles_v1'));
     const cachedSettings = Security.decrypt(localStorage.getItem('nebula_settings_v1'));
 
     try {
-      console.log("🔥 BUSCANDO PERFIS OTIMIZADOS DO SUPABASE 🔥");
-      const [uRes, pRes, sRes] = await Promise.all([
-        supabase.from('membros_v3').select('*'),
-        supabase.from('ferramentas_v3').select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at').order('orderIndex', { ascending: true }),
+      // 🔥 CORREÇÃO: Buscar TODOS os dados do Supabase, incluindo USERS > 1000 e PROFILES > 200!
+      const [allUsers, allProfilesRaw, sRes] = await Promise.all([
+        // Busca TODOS os usuários usando paginação (> 1000)
+        fetchAllUsers(),
+        // Busca TODOS os perfis usando paginação (bypassa o limite de max-rows)
+        fetchAllProfiles(),
+        // Busca settings
         supabase.from('settings').select('config').single()
       ]);
 
-      const cloudUsers = uRes.data || [];
-      const cloudProfiles = pRes.data || [];
-      const cloudSettings = sRes.data?.config || INITIAL_SETTINGS;
+      // 🔥 CRITICAL: Agora pega os users da cloud com paginação!
+      const cloudUsers = (allUsers && allUsers.length > 0) ? allUsers : (cachedUsers || MOCK_USERS);
+      const rawCloudProfiles = (allProfilesRaw && allProfilesRaw.length > 0) ? allProfilesRaw : (cachedProfiles || MOCK_PROFILES);
+      const cloudProfiles = rawCloudProfiles.map((p: any) => unpackProfileFromSupabase(p));
+      const cloudSettings = sRes.data?.config || cachedSettings || INITIAL_SETTINGS;
 
-      // Anti-wipe desativado temporariamente para debug
-      // if (cloudProfiles.length === 0 && cachedProfiles && cachedProfiles.length > 0) { ... }
+      console.log(`✅ Supabase: ${cloudUsers.length} usuários, ${cloudProfiles.length} profiles carregados`);
 
-      if (pRes.error) {
-         cloudSettings.updateMessage = `DB_ERROR: ${pRes.error.message} (code: ${pRes.error.code})`;
-      } else if (cloudProfiles.length === 0) {
-         cloudSettings.updateMessage = `DB_EMPTY: 0 rows returned for profiles.`;
-      }
+      memoryCache = {
+        users: cloudUsers,
+        profiles: cloudProfiles,
+        settings: cloudSettings,
+        timestamp: now
+      };
 
-      // Salva no cache sem deixar falhas de quota matarem o retorno
-      try { DataService.saveToLocalCache(cloudUsers, cloudProfiles, cloudSettings); } catch (cacheErr) {
-        console.warn('Cache write failed (quota?), continuing anyway:', cacheErr);
-      }
-
-      console.log(`✅ DataService retornando ${cloudProfiles.length} perfis do Supabase`);
+      DataService.saveToLocalCache(cloudUsers, cloudProfiles, cloudSettings);
       return { users: cloudUsers, profiles: cloudProfiles, settings: cloudSettings, isOffline: false };
+
     } catch (error) {
+      console.warn("Modo Offline:", error);
       return {
         users: cachedUsers || MOCK_USERS,
         profiles: cachedProfiles || MOCK_PROFILES,
-        settings: { ...(cachedSettings || INITIAL_SETTINGS), updateMessage: `CATCH_ERROR: ${String(error)}` },
-        isOffline: true,
-        catchError: String(error)
+        settings: cachedSettings || INITIAL_SETTINGS,
+        isOffline: true
       };
     }
   },
 
-  saveUsers: async (users: User[]): Promise<boolean> => {
-    localStorage.setItem('nebula_users_v1', Security.encrypt(users));
+  // ============================================
+  // BUSCAR APENAS USUÁRIO ESPECÍFICO (não todos)
+  // ============================================
+  fetchUserById: async (userId: string): Promise<User | null> => {
     try {
-      const sanitized = users.map(u => cleanForSupabase(u));
-      const chunkSize = 200;
-      for (let i = 0; i < sanitized.length; i += chunkSize) {
-        const chunk = sanitized.slice(i, i + chunkSize);
-        const { error } = await supabase.from('membros_v3').upsert(chunk, { onConflict: 'id' });
-        if (error) {
-          console.error("Erro no chunk users:", error.message);
-          return false;
-        }
-      }
-      return true;
-    } catch (e) { return false; }
+      const { data, error } = await supabase
+        .from('membros_v3')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('Error fetching user:', e);
+      return null;
+    }
   },
 
-  saveProfiles: async (profiles: Profile[]): Promise<boolean> => {
-    localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
+  // ============================================
+  // BUSCAR TODOS OS PROFILES (profiles são globais)
+  // ============================================
+  fetchUserProfiles: async (_userId?: string): Promise<Profile[]> => {
     try {
-      if (!profiles || profiles.length === 0) return true;
+      // 🔥 PROFILES SÃO GLOBAIS - buscar todos, não filtrar por userId
+      const { data, error } = await supabase
+        .from('ferramentas_v3')
+        .select('*')
+        .order('orderIndex', { ascending: true });
 
-      // Envia em lotes de 5 para evitar limite de payload do Supabase
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
-        const batch = profiles.slice(i, i + BATCH_SIZE);
-        const sanitized = batch.map(p => cleanForSupabase(p));
-        const { error } = await supabase.from('ferramentas_v3').upsert(sanitized, { onConflict: 'id' });
-        if (error) {
-          console.error("Erro Supabase batch:", error.message);
-          return false;
-        }
-        // Pequeno delay entre lotes
-        if (i + BATCH_SIZE < profiles.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-      }
-      return true;
-    } catch (e) { return false; }
-  },
+      if (error) throw error;
 
-  upsertSingleProfile: async (profile: Profile): Promise<boolean> => {
-    try {
-      const sanitized = cleanForSupabase(profile);
+      const profiles = (data || []).map((p: any) => unpackProfileFromSupabase(p));
 
-      // 🚀 Usa o IPC do Electron (supabaseAdmin com poderes totais) se disponível
-      if (typeof window !== 'undefined' && (window as any).nebulaAPI?.db?.upsertProfile) {
-        const result = await (window as any).nebulaAPI.db.upsertProfile(sanitized);
-        if (!result.success) {
-          console.error('IPC upsert error:', result.error);
-          return false;
-        }
-      } else {
-        const { error } = await supabase.from('ferramentas_v3').upsert([sanitized], { onConflict: 'id' });
-        if (error) {
-          console.error("Erro upsert single:", error.message);
-          return false;
-        }
-      }
+      // Atualizar cache com todos os profiles
+      memoryCache.profiles = profiles;
+      memoryCache.timestamp = Date.now();
 
-      // Atualiza cache local
-      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
-      const updated = cached.map((p: Profile) => p.id === profile.id ? profile : p);
-      if (!cached.find((p: Profile) => p.id === profile.id)) updated.push(profile);
-      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
-      return true;
-    } catch (e) { return false; }
-  },
-
-  saveSettings: async (settings: AppSettings): Promise<boolean> => {
-    localStorage.setItem('nebula_settings_v1', Security.encrypt(settings));
-    try {
-      const { error } = await supabase.from('settings').upsert({ id: 1, config: settings }, { onConflict: 'id' });
-      return !error;
-    } catch (error) { return false; }
-  },
-
-  // Fix: Added missing deleteUser method
-  deleteUser: async (userId: string): Promise<boolean> => {
-    try {
-      const { error } = await supabase.from('membros_v3').delete().eq('id', userId);
-      if (error) return false;
-      const current = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
-      localStorage.setItem('nebula_users_v1', Security.encrypt(current.filter((u: any) => u.id !== userId)));
-      return true;
-    } catch (e) { return false; }
-  },
-
-  // Fix: Added missing deleteProfile method
-  deleteProfile: async (profileId: string): Promise<boolean> => {
-    try {
-      // 🚀 Usa o IPC do Electron (supabaseAdmin) se disponível
-      if (typeof window !== 'undefined' && (window as any).nebulaAPI?.db?.deleteProfile) {
-        const result = await (window as any).nebulaAPI.db.deleteProfile(profileId);
-        if (!result.success) {
-          console.error('IPC delete error:', result.error);
-          return false;
-        }
-      } else {
-        // Tenta deletar direto
-        const { error } = await supabase.from('ferramentas_v3').delete().eq('id', profileId);
-        if (error) {
-          // Fallback: soft-delete renomeando para __DELETED__
-          const { error: softErr } = await supabase.from('ferramentas_v3').update({ name: '__DELETED__' }).eq('id', profileId);
-          if (softErr) return false;
-        }
-      }
-      // Atualiza cache local
-      const current = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
-      localStorage.setItem('nebula_profiles_v1', Security.encrypt(current.filter((p: any) => p.id !== profileId)));
-      return true;
-    } catch (e) { return false; }
-  },
-
-  saveToLocalCache: (users: User[], profiles: Profile[], settings: AppSettings) => {
-    // NÃO salvar users nem profiles (muito grandes para o localStorage do Electron)
-    // Só salvar settings (pequeno)
-    try { localStorage.setItem('nebula_settings_v1', Security.encrypt(settings)); } catch(e) { console.warn('Cache settings failed:', e); }
-  },
-
-  getRememberMe: () => Security.decrypt(localStorage.getItem('nebula_auth_remember')),
-  saveRememberMe: (email: string, password: string) => {
-    localStorage.setItem('nebula_auth_remember', Security.encrypt({ email, password, timestamp: Date.now() }));
-  },
-  clearRememberMe: () => localStorage.removeItem('nebula_auth_remember'),
-
-  updateSingleUser: async (user: User): Promise<boolean> => {
-    try {
-      const sanitized = cleanForSupabase(user);
-      const { error } = await supabase.from('membros_v3').upsert(sanitized, { onConflict: 'id' });
-      if (error) return false;
-      const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
-      const updated = cached.map((u: User) => u.id === user.id ? user : u);
-      if (!cached.find((u: User) => u.id === user.id)) updated.push(user);
-      localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
-      return true;
-    } catch (e) { return false; }
+      return profiles;
+    } catch (e) {
+      console.error('Error fetching profiles:', e);
+      return [];
+    }
   },
 
   updateUserSession: async (email: string, machineId: string | null, isLoggedIn: boolean): Promise<boolean> => {
@@ -216,62 +356,479 @@ export const DataService = {
     }
   },
 
+  ping: async () => {
+    const start = Date.now();
+    try {
+      const { error } = await supabase.from('settings').select('id').limit(1).single();
+      return { success: !error, latency: Date.now() - start };
+    } catch (e) {
+      return { success: false, latency: 0 };
+    }
+  },
+
+  // ============================================
+  // SALVAR USUÁRIO ÚNICO (com rate limit)
+  // ============================================
+  saveUsers: async (users: User[]): Promise<boolean> => {
+    localStorage.setItem('nebula_users_v1', Security.encrypt(users));
+    memoryCache.users = users;
+
+    try {
+      // Processar em batches pequenos
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < users.length; i += BATCH_SIZE) {
+        const batch = users.slice(i, i + BATCH_SIZE);
+        const sanitized = await Promise.all(batch.map(u => prepareUserForSupabase(u)));
+
+        const { error } = await supabase
+          .from('membros_v3')
+          .upsert(sanitized, { onConflict: 'id' });
+
+        if (error) {
+          console.error('Batch save error:', error);
+          return false;
+        }
+
+        // Delay progressivo (evita 250 users salvando simultaneamente)
+        if (i + BATCH_SIZE < users.length) {
+          await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 100));
+        }
+      }
+      return true;
+    } catch (e) {
+      console.error('Save users error:', e);
+      return false;
+    }
+  },
+
+  updateSingleUser: async (user: User): Promise<boolean> => {
+    if (!checkRateLimit(user.id)) {
+      console.warn('⚠️ Rate limit atingido para user:', user.id);
+      // Salvar apenas localmente se exceder rate limit
+      if (memoryCache.users) {
+        const index = memoryCache.users.findIndex(u => u.id === user.id);
+        if (index !== -1) memoryCache.users[index] = user;
+        localStorage.setItem('nebula_users_v1', Security.encrypt(memoryCache.users));
+      }
+      return true; // Retorna true mas não sincroniza (será feito depois)
+    }
+
+    try {
+      console.log('💾 Salvando user no Supabase:', user.id);
+
+      const { error } = await supabase
+        .from('membros_v3')
+        .upsert(await prepareUserForSupabase(user), { onConflict: 'id' });
+
+      if (error) {
+        console.error('❌ Erro Supabase:', error.message);
+        // Salva localmente mesmo com erro
+        if (memoryCache.users) {
+          const index = memoryCache.users.findIndex(u => u.id === user.id);
+          if (index !== -1) memoryCache.users[index] = user;
+          else memoryCache.users.push(user);
+          localStorage.setItem('nebula_users_v1', Security.encrypt(memoryCache.users));
+        }
+        return false;
+      }
+
+      console.log('✅ User salvo no Supabase!');
+
+      if (memoryCache.users) {
+        const index = memoryCache.users.findIndex(u => u.id === user.id);
+        if (index !== -1) {
+          memoryCache.users[index] = user;
+        } else {
+          memoryCache.users.push(user);
+        }
+        localStorage.setItem('nebula_users_v1', Security.encrypt(memoryCache.users));
+      }
+
+      return true;
+    } catch (e) {
+      console.error('❌ Update user error:', e);
+      return false;
+    }
+  },
+
+  // ============================================
+  // UPDATE PROFILE COM DEBOUNCE (crítico para escala)
+  // ============================================
+  // ============================================
+  // UPSERT: CRIAR OU ATUALIZAR UM ÚNICO PERFIL NA HORA
+  // ============================================
+  upsertSingleProfile: async (profile: Profile): Promise<boolean> => {
+    // Atualizar cache imediatamente
+    if (memoryCache.profiles) {
+      const index = memoryCache.profiles.findIndex(p => p.id === profile.id);
+      if (index !== -1) {
+        memoryCache.profiles[index] = profile;
+      } else {
+        memoryCache.profiles.push(profile);
+      }
+      try {
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+      } catch (quotaErr) {
+        console.warn('⚠️ localStorage cheio (upsert), salvando sem cookies...');
+        const lightProfiles = memoryCache.profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+      }
+    }
+
+    try {
+      const sanitized = packProfileForSupabase(profile);
+      
+      // Tenta atualizar primeiro (bypass RLS upsert bug no Supabase)
+      const { data, error: updateError } = await supabase
+         .from('ferramentas_v3')
+         .update(sanitized)
+         .eq('id', profile.id)
+         .select();
+         
+      // Se não atualizou nenhuma linha (perfil novo) ou deu erro, tenta inserir
+      if (updateError || !data || data.length === 0) {
+         const { error: insertError } = await supabase.from('ferramentas_v3').insert([sanitized]);
+         if (insertError) {
+            console.error('Insert single profile error:', insertError);
+            return false;
+         }
+      }
+      
+      return true;
+    } catch (e) {
+      console.error('Upsert single profile error:', e);
+      return false;
+    }
+  },
+
   updateSingleProfile: async (profileId: string, updates: Partial<Profile>): Promise<boolean> => {
-    try {
-      const sanitized = cleanForSupabase(updates);
-      const { error } = await supabase.from('ferramentas_v3').update(sanitized).eq('id', profileId);
-      if (error) return false;
-      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
-      const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, ...updates } : p);
-      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
-      return true;
-    } catch (e) { return false; }
+    // Atualizar cache imediatamente
+    if (memoryCache.profiles) {
+      const index = memoryCache.profiles.findIndex(p => p.id === profileId);
+      if (index !== -1) {
+        memoryCache.profiles[index] = { ...memoryCache.profiles[index], ...updates };
+        try {
+          localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+        } catch (quotaErr) {
+          console.warn('⚠️ localStorage cheio (update), salvando sem cookies...');
+          const lightProfiles = memoryCache.profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+          localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+        }
+      }
+    }
+
+    // Acumular updates para enviar em batch
+    pendingProfileUpdates.set(profileId, {
+      ...(pendingProfileUpdates.get(profileId) || {}),
+      ...updates
+    });
+
+    // Debounce: aguardar 2 segundos antes de sincronizar
+    if (saveProfilesTimeout) clearTimeout(saveProfilesTimeout);
+
+    saveProfilesTimeout = setTimeout(async () => {
+      const updates = Array.from(pendingProfileUpdates.entries());
+      pendingProfileUpdates.clear();
+
+      try {
+        // Enviar todos os updates acumulados de uma vez
+        for (const [id, data] of updates) {
+          if ((window as any)?.nebulaAPI?.saveProfileSession && (data.cookies !== undefined || data.localStorage !== undefined)) {
+            await (window as any).nebulaAPI.saveProfileSession(id, data.cookies, data.localStorage);
+          } else {
+            try {
+              await fetch('https://multilogin-admin-sigma.vercel.app/api/desktop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: data.cookies !== undefined ? 'updateProfileSession' : 'updateProfile',
+                  payload: data.cookies !== undefined ? { id, cookies: data.cookies, localStorage: data.localStorage } : { id, updates: prepareForSupabase(data) }
+                })
+              });
+            } catch (_) {
+              await supabase
+                .from('ferramentas_v3')
+                .update(prepareForSupabase(data))
+                .eq('id', id);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Batch profile update error:', e);
+      }
+    }, 2000); // 2 segundos de debounce
+
+    return true;
   },
 
-  updateProfileSessionData: async (profileId: string, sessionData: any): Promise<boolean> => {
+  // ============================================
+  // SALVAR PROFILES COM THROTTLE
+  // ============================================
+  saveProfiles: async (profiles: Profile[]): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('ferramentas_v3').update({ cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' }).eq('id', profileId);
-      if (error) return false;
-      const cached = Security.decrypt(localStorage.getItem('nebula_profiles_v1')) || [];
-      const updated = cached.map((p: Profile) => p.id === profileId ? { ...p, cookies: sessionData.cookies, localStorage: sessionData.localStorage || '' } : p);
-      localStorage.setItem('nebula_profiles_v1', Security.encrypt(updated));
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
+    } catch (quotaErr) {
+      console.warn('⚠️ localStorage cheio (save), salvando sem cookies...');
+      const lightProfiles = profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+      localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+    }
+    memoryCache.profiles = profiles;
+
+    try {
+      if (!profiles || profiles.length === 0) return true;
+
+      // Batches menores (profiles tem cookies = muito dado)
+      const BATCH_SIZE = 3;
+      for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+        const batch = profiles.slice(i, i + BATCH_SIZE);
+        const sanitized = batch.map(p => packProfileForSupabase(p));
+
+        const { error } = await supabase
+          .from('ferramentas_v3')
+          .upsert(sanitized, { onConflict: 'id' });
+
+        if (error) {
+          console.error('Batch save profiles error:', error);
+          return false;
+        }
+
+        // Delay maior entre batches (profiles são pesados)
+        if (i + BATCH_SIZE < profiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 200));
+        }
+      }
       return true;
-    } catch (e) { return false; }
+    } catch (e) {
+      console.error('Save profiles error:', e);
+      return false;
+    }
   },
 
-  getProfileSessionData: async (profileId: string): Promise<any> => {
+  saveSettings: async (settings: AppSettings): Promise<boolean> => {
+    localStorage.setItem('nebula_settings_v1', Security.encrypt(settings));
+    memoryCache.settings = settings;
+
     try {
-      const { data, error } = await supabase.from('ferramentas_v3').select('cookies, localStorage').eq('id', profileId).single();
-      if (error || !data) return null;
-      return data;
-    } catch (e) { return null; }
+      const { error } = await supabase
+        .from('settings')
+        .upsert({ id: 1, config: settings }, { onConflict: 'id' });
+      return !error;
+    } catch (error) {
+      console.error('Save settings error:', error);
+      return false;
+    }
+  },
+
+  deleteUser: async (userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.from('membros_v3').delete().eq('id', userId).select();
+
+      if (!error && (!data || data.length === 0)) {
+        console.warn('⚠️ RLS bloqueou o DELETE de user! Tentando Soft-Delete via UPDATE...');
+        const { error: updateErr } = await supabase.from('membros_v3').update({ password: '__DELETED__', blocked: true }).eq('id', userId);
+        if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
+      } else if (error) {
+        throw error;
+      }
+
+      // 🔥 SEMPRE atualiza localStorage e memória
+      if (memoryCache.users) {
+        memoryCache.users = memoryCache.users.filter(u => u.id !== userId);
+      }
+      try {
+        const cached = Security.decrypt(localStorage.getItem('nebula_users_v1'));
+        if (cached && Array.isArray(cached)) {
+          const updated = cached.filter((u: any) => u.id !== userId);
+          localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
+          if (!memoryCache.users) memoryCache.users = updated;
+        }
+      } catch (cacheErr) {
+        console.warn('Erro ao atualizar cache local após delete:', cacheErr);
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Delete user error:', e);
+      return false;
+    }
   },
 
   deleteAllMembers: async (): Promise<boolean> => {
     try {
-      const { error } = await supabase.from('membros_v3').delete().eq('role', 'MEMBER');
-      if (error) return false;
-      const cached = Security.decrypt(localStorage.getItem('nebula_users_v1')) || [];
-      const updated = cached.filter((u: User) => u.role !== 'MEMBER');
-      localStorage.setItem('nebula_users_v1', Security.encrypt(updated));
-      return true;
-    } catch (e) { return false; }
-  },
+      const { error } = await supabase.from('membros_v3').delete().eq('role', Role.MEMBER);
 
-  invalidateCache: () => {
-    localStorage.removeItem('nebula_users_v1');
-    localStorage.removeItem('nebula_profiles_v1');
-    localStorage.removeItem('nebula_settings_v1');
-  },
+      if (!error && memoryCache.users) {
+        memoryCache.users = memoryCache.users.filter(u => u.role !== Role.MEMBER);
+        localStorage.setItem('nebula_users_v1', Security.encrypt(memoryCache.users));
+      }
 
-  ping: async (): Promise<{ success: boolean; latency: number }> => {
-    const start = Date.now();
-    try {
-      const { error } = await supabase.from('settings').select('id').limit(1);
-      if (error) return { success: false, latency: 0 };
-      return { success: true, latency: Date.now() - start };
+      return !error;
     } catch (e) {
-      return { success: false, latency: 0 };
+      console.error('Delete members error:', e);
+      return false;
+    }
+  },
+
+  deleteProfile: async (profileId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.from('ferramentas_v3').delete().eq('id', profileId).select();
+
+      if (!error && (!data || data.length === 0)) {
+        console.warn('⚠️ RLS bloqueou o DELETE de perfil! Tentando Soft-Delete via UPDATE...');
+        const { error: updateErr } = await supabase.from('ferramentas_v3').update({ name: '__DELETED__' }).eq('id', profileId);
+        if (updateErr) throw new Error('RLS bloqueou DELETE e UPDATE.');
+      } else if (error) {
+        throw error;
+      }
+
+      if (memoryCache.profiles) {
+        memoryCache.profiles = memoryCache.profiles.filter(p => p.id !== profileId);
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(memoryCache.profiles));
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Delete profile error:', e);
+      return false;
+    }
+  },
+
+  saveToLocalCache: (users: User[], profiles: Profile[], settings: AppSettings) => {
+    try {
+      localStorage.setItem('nebula_users_v1', Security.encrypt(users));
+      localStorage.setItem('nebula_settings_v1', Security.encrypt(settings));
+
+      // 🔥 Profiles são grandes (cookies) - tenta salvar, se falhar limpa cookies antigos
+      try {
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(profiles));
+      } catch (quotaError) {
+        console.warn('⚠️ localStorage cheio, salvando profiles sem cookies...');
+        // Remove cookies dos profiles para economizar espaço
+        const lightProfiles = profiles.map(p => ({ ...p, cookies: '', localStorage: '' }));
+        localStorage.setItem('nebula_profiles_v1', Security.encrypt(lightProfiles));
+      }
+    } catch (e) {
+      console.error('❌ Erro ao salvar cache local:', e);
+      // Em último caso, limpa tudo e tenta de novo
+      try {
+        localStorage.removeItem('nebula_profiles_v1');
+        localStorage.setItem('nebula_users_v1', Security.encrypt(users));
+        localStorage.setItem('nebula_settings_v1', Security.encrypt(settings));
+      } catch (e2) {
+        console.error('❌ localStorage totalmente cheio, limpando cache...');
+        localStorage.clear();
+      }
+    }
+
+    memoryCache = {
+      users,
+      profiles,
+      settings,
+      timestamp: Date.now()
+    };
+  },
+
+  clearMemoryCache: () => {
+    memoryCache = {
+      users: null,
+      profiles: null,
+      settings: null,
+      timestamp: 0
+    };
+    pendingProfileUpdates.clear();
+    if (saveProfilesTimeout) clearTimeout(saveProfilesTimeout);
+    if (saveUsersTimeout) clearTimeout(saveUsersTimeout);
+  },
+
+  getRememberMe: () => Security.decrypt(localStorage.getItem('nebula_auth_remember')),
+
+  saveRememberMe: (email: string, password: string) => {
+    localStorage.setItem('nebula_auth_remember', Security.encrypt({ email, password, timestamp: Date.now() }));
+  },
+
+  clearRememberMe: () => localStorage.removeItem('nebula_auth_remember'),
+
+  // ============================================
+  // SINCRONIZAÇÃO EM BACKGROUND (opcional)
+  // ============================================
+  syncPendingChanges: async () => {
+    if (pendingProfileUpdates.size > 0) {
+      const updates = Array.from(pendingProfileUpdates.entries());
+      pendingProfileUpdates.clear();
+
+      try {
+        for (const [id, data] of updates) {
+          await supabase
+            .from('ferramentas_v3')
+            .update(prepareForSupabase(data))
+            .eq('id', id);
+        }
+      } catch (e) {
+        console.error('Background sync error:', e);
+      }
+    }
+  },
+
+  // ============================================
+  // SINCRONIZAÇÃO DE SESSÃO VIA CLOUD
+  // ============================================
+  updateProfileSessionData: async (profileId: string, sessionData: any): Promise<boolean> => {
+    console.log(`📤 [SESSION] Salvando sessão no Supabase para perfil: ${profileId}`);
+
+    try {
+      // Atualiza o campo session_data do perfil no Supabase
+      const { error } = await supabase
+        .from('ferramentas_v3')
+        .update({
+          session_data: sessionData,
+          session_updated_at: new Date().toISOString()
+        })
+        .eq('id', profileId);
+
+      if (error) {
+        console.error('❌ Erro ao salvar sessão:', error);
+        return false;
+      }
+
+      // Atualiza o cache em memória
+      if (memoryCache.profiles) {
+        const index = memoryCache.profiles.findIndex(p => p.id === profileId);
+        if (index !== -1) {
+          (memoryCache.profiles[index] as any).session_data = sessionData;
+          (memoryCache.profiles[index] as any).session_updated_at = new Date().toISOString();
+        }
+      }
+
+      console.log(`✅ [SESSION] Sessão salva no Supabase com sucesso!`);
+      return true;
+
+    } catch (e) {
+      console.error('❌ updateProfileSessionData error:', e);
+      return false;
+    }
+  },
+
+  getProfileSessionData: async (profileId: string): Promise<any | null> => {
+    console.log(`📥 [SESSION] Buscando sessão do Supabase para perfil: ${profileId}`);
+
+    try {
+      const { data, error } = await supabase
+        .from('ferramentas_v3')
+        .select('session_data, session_updated_at')
+        .eq('id', profileId)
+        .single();
+
+      if (error || !data?.session_data) {
+        console.log(`⚠️ [SESSION] Nenhuma sessão encontrada para perfil: ${profileId}`);
+        return null;
+      }
+
+      console.log(`✅ [SESSION] Sessão encontrada! Capturada em: ${data.session_updated_at}`);
+      return data.session_data;
+
+    } catch (e) {
+      console.error('❌ getProfileSessionData error:', e);
+      return null;
     }
   }
 };

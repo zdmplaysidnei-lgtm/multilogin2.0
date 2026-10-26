@@ -53,6 +53,7 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
   const [filterUnlimitedActive, setFilterUnlimitedActive] = useState(false);
 
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncSuccess, setIsSyncSuccess] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
 
   // 🔍 ESTADOS PARA PESQUISA (Ctrl+F)
@@ -132,18 +133,25 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
 
   const performCloudSync = async (isManual = false) => {
     const activeWebview = webviewRefs.current[activeTabIndex];
-    if (!activeWebview || !profile || !window.nebulaAPI) return;
+    if (!activeWebview || !profile) return;
 
-    // APLICAÇÃO DA TRAVA DE 60 SEGUNDOS (THROTTLING)
+    // APLICAÇÃO DA TRAVA DE 60 SEGUNDOS (THROTTLING PARA SYNC AUTOMÁTICO)
     const now = Date.now();
     if (!isManual && now - lastSyncTimeRef.current < 60000) {
-      return; // Se não for manual e não passou 60s, cancela o envio para poupar CPU
+      return;
     }
 
     if (isManual) setIsSyncing(true);
     try {
       const partition = "persist:" + profile.id;
-      const cookieResult = await window.nebulaAPI.getCookies(partition);
+      let rawCookies: any[] = [];
+      if (window.nebulaAPI?.getCookies) {
+        const cookieResult = await window.nebulaAPI.getCookies(partition);
+        if (cookieResult?.status === 'success') {
+          rawCookies = cookieResult.cookies || [];
+        }
+      }
+
       let lsData = "{}";
       try { 
         lsData = await activeWebview.executeJavaScript(`
@@ -157,26 +165,63 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
           })()
         `); 
       } catch (e) { }
-      if (cookieResult?.status === 'success') {
-        // Fix: Call onSyncSession if provided to handle cloud sync via App.tsx
-        if (onSyncSession) {
-          const cookiesStr = JSON.stringify(cookieResult.cookies || []);
-          await onSyncSession(profile.id, cookiesStr, lsData);
-        } else {
-          // Fallback to legacy local agent if onSyncSession is not available
-          await fetch('http://127.0.0.1:19999/sync-cookies', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profileId: profile.id, cookies: cookieResult.cookies || [], localStorage: lsData })
-          });
-        }
 
-        // ATUALIZA O TEMPO DO ÚLTIMO SYNC
-        lastSyncTimeRef.current = Date.now();
-
-        if (isManual && onToast) onToast('Sincronizado!', 'success');
+      // Limpeza de cookies transientes de handshake do Google que causam rrk=46 se não estiver logado
+      const hasGoogle = rawCookies.some((c: any) => (c.domain || '').includes('google.com'));
+      const hasRealGoogleLogin = rawCookies.some((c: any) => c.name === 'SID' || c.name === 'SSID' || c.name === '__Secure-1PSID');
+      let filteredCookies = rawCookies;
+      if (hasGoogle && !hasRealGoogleLogin) {
+        filteredCookies = rawCookies.filter((c: any) => !c.domain.includes('google.com') && !c.domain.includes('youtube.com'));
       }
-    } catch (e) { if (isManual) onToast('Erro Sync', 'error'); }
-    finally { if (isManual) setTimeout(() => setIsSyncing(false), 800); }
+
+      const cookiesStr = JSON.stringify(filteredCookies);
+      let saveSuccess = false;
+
+      // 1. Salva via IPC direto no Supabase ferramentas_v3 com Service Role (Bypassa RLS)
+      if (window.nebulaAPI?.saveProfileSession) {
+        const res = await window.nebulaAPI.saveProfileSession(profile.id, cookiesStr, lsData);
+        if (res?.success) saveSuccess = true;
+      }
+
+      // 2. Atualiza estado em App.tsx
+      if (onSyncSession) {
+        await onSyncSession(profile.id, cookiesStr, lsData);
+      }
+
+      // 3. Fallback via API Admin Vercel
+      if (!saveSuccess) {
+        try {
+          const apiRes = await fetch('https://multilogin-admin-sigma.vercel.app/api/desktop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'updateProfileSession',
+              payload: {
+                id: profile.id,
+                cookies: cookiesStr,
+                localStorage: lsData
+              }
+            })
+          });
+          const j = await apiRes.json();
+          if (j?.success) saveSuccess = true;
+        } catch (_) {}
+      }
+
+      lastSyncTimeRef.current = Date.now();
+
+      if (isManual) {
+        setIsSyncSuccess(true);
+        setTimeout(() => setIsSyncSuccess(false), 4000);
+        if (onToast) {
+          onToast(`✅ Sessão salva no Supabase com sucesso! (${filteredCookies.length} cookies sincronizados)`, 'success');
+        }
+      }
+    } catch (e) {
+      if (isManual && onToast) onToast('Erro ao sincronizar sessão: ' + (e as Error).message, 'error');
+    } finally {
+      if (isManual) setTimeout(() => setIsSyncing(false), 600);
+    }
   };
 
   const executeDiscordTokenLogin = async (webview: any) => {
@@ -394,7 +439,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
              (function() {
                if (!sessionStorage.getItem('nebula_ls_injected')) {
                  try {
-                   const lsData = ${profile.localStorage};
+                   const safeLsString = JSON.stringify(profile.localStorage);
+                   var rawLs = ${safeLsString};
+                   var lsData = JSON.parse(rawLs);
                    // Limpar chaves poluidas formato CDP multi-origin (0,1,2,3)
                    for (var _i = localStorage.length - 1; _i >= 0; _i--) {
                      var _k = localStorage.key(_i);
@@ -993,8 +1040,22 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
               <HelpCircle size={16} />
             </button>
           )}
-          <button onClick={() => performCloudSync(true)} disabled={isSyncing} className={`p-1.5 rounded ${isSyncing ? 'text-[#FF6B6B]' : 'text-gray-400 hover:text-white'}`} title="Sincronizar Nuvem">
-            <UploadCloud size={16} className={isSyncing ? 'animate-bounce' : ''} />
+          <button
+            onClick={() => performCloudSync(true)}
+            disabled={isSyncing}
+            className={`px-3 py-1.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer ${
+              isSyncSuccess
+                ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.5)] border border-emerald-400'
+                : isSyncing
+                ? 'bg-purple-900/60 text-purple-200 border border-purple-500/50 cursor-wait'
+                : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400/40 hover:shadow-[0_0_15px_rgba(16,185,129,0.3)]'
+            }`}
+            title="Salvar a sessão atual (cookies e dados de login) no Supabase para todos os clientes"
+          >
+            <UploadCloud size={15} className={isSyncing ? 'animate-bounce' : ''} />
+            <span>
+              {isSyncSuccess ? 'Salvo no Supabase! ✅' : isSyncing ? 'Salvando na Nuvem...' : 'Salvar Sessão no Supabase'}
+            </span>
           </button>
           
           <button

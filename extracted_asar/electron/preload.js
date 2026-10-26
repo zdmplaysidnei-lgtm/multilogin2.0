@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('nebulaAPI', {
   getCookies: (partition) => ipcRenderer.invoke('get-cookies', { partition }),
   setProxy: (proxy, partition) => ipcRenderer.invoke('set-proxy', { proxy, partition }),
   // Sincronização de sessão via Cloud
+  saveProfileSession: (profileId, cookies, localStorage) => ipcRenderer.invoke('save-profile-session', { profileId, cookies, localStorage }),
   captureSession: (profileId, targetUrl) => ipcRenderer.invoke('capture-session', { profileId, targetUrl }),
   captureInternalSessionSilent: (profileId, targetUrl) => ipcRenderer.invoke('capture-internal-session-silent', { profileId, targetUrl }),
   injectSession: (profileId, sessionData, targetUrl) => ipcRenderer.invoke('inject-session', { profileId, sessionData, targetUrl }),

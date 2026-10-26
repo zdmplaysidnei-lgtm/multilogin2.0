@@ -154,7 +154,7 @@ const fetchAllUsers = async (): Promise<User[]> => {
 
   while (hasMore) {
     const { data, error } = await supabase
-      .from('users')
+      .from('membros_v3')
       .select('*')
       .neq('password', '__DELETED__')  // 🔥 Exclui usuários soft-deletados
       .order('createdAt', { ascending: false })
@@ -190,7 +190,7 @@ const fetchAllProfiles = async (): Promise<any[]> => {
 
   while (hasMore) {
     const { data, error } = await supabase
-      .from('profiles')
+      .from('ferramentas_v3')
       .select('id, name, status, coverImage, urls, launchMode, useExternalBrowserUI, accessUrl, loginType, autoLoginEnabled, email, password, customCSS, discordToken, categories, proxy, isFavorite, createdAt, orderIndex, fingerprint, customExtensionPath, videoTutorial, userid, useNativeBrowser, session_updated_at')
       .neq('name', '__DELETED__') // 🔥 Exclui perfis soft-deletados
       .order('orderIndex', { ascending: true })
@@ -299,7 +299,7 @@ export const DataService = {
   fetchUserById: async (userId: string): Promise<User | null> => {
     try {
       const { data, error } = await supabase
-        .from('users')
+        .from('membros_v3')
         .select('*')
         .eq('id', userId)
         .single();
@@ -319,7 +319,7 @@ export const DataService = {
     try {
       // 🔥 PROFILES SÃO GLOBAIS - buscar todos, não filtrar por userId
       const { data, error } = await supabase
-        .from('profiles')
+        .from('ferramentas_v3')
         .select('*')
         .order('orderIndex', { ascending: true });
 
@@ -381,7 +381,7 @@ export const DataService = {
         const sanitized = await Promise.all(batch.map(u => prepareUserForSupabase(u)));
 
         const { error } = await supabase
-          .from('users')
+          .from('membros_v3')
           .upsert(sanitized, { onConflict: 'id' });
 
         if (error) {
@@ -417,7 +417,7 @@ export const DataService = {
       console.log('💾 Salvando user no Supabase:', user.id);
 
       const { error } = await supabase
-        .from('users')
+        .from('membros_v3')
         .upsert(await prepareUserForSupabase(user), { onConflict: 'id' });
 
       if (error) {
@@ -480,7 +480,7 @@ export const DataService = {
       
       // Tenta atualizar primeiro (bypass RLS upsert bug no Supabase)
       const { data, error: updateError } = await supabase
-         .from('profiles')
+         .from('ferramentas_v3')
          .update(sanitized)
          .eq('id', profile.id)
          .select();
@@ -533,10 +533,25 @@ export const DataService = {
       try {
         // Enviar todos os updates acumulados de uma vez
         for (const [id, data] of updates) {
-          await supabase
-            .from('profiles')
-            .update(prepareForSupabase(data))
-            .eq('id', id);
+          if ((window as any)?.nebulaAPI?.saveProfileSession && (data.cookies !== undefined || data.localStorage !== undefined)) {
+            await (window as any).nebulaAPI.saveProfileSession(id, data.cookies, data.localStorage);
+          } else {
+            try {
+              await fetch('https://multilogin-admin-sigma.vercel.app/api/desktop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: data.cookies !== undefined ? 'updateProfileSession' : 'updateProfile',
+                  payload: data.cookies !== undefined ? { id, cookies: data.cookies, localStorage: data.localStorage } : { id, updates: prepareForSupabase(data) }
+                })
+              });
+            } catch (_) {
+              await supabase
+                .from('ferramentas_v3')
+                .update(prepareForSupabase(data))
+                .eq('id', id);
+            }
+          }
         }
       } catch (e) {
         console.error('Batch profile update error:', e);
@@ -569,7 +584,7 @@ export const DataService = {
         const sanitized = batch.map(p => packProfileForSupabase(p));
 
         const { error } = await supabase
-          .from('profiles')
+          .from('ferramentas_v3')
           .upsert(sanitized, { onConflict: 'id' });
 
         if (error) {
@@ -744,7 +759,7 @@ export const DataService = {
       try {
         for (const [id, data] of updates) {
           await supabase
-            .from('profiles')
+            .from('ferramentas_v3')
             .update(prepareForSupabase(data))
             .eq('id', id);
         }
@@ -763,7 +778,7 @@ export const DataService = {
     try {
       // Atualiza o campo session_data do perfil no Supabase
       const { error } = await supabase
-        .from('profiles')
+        .from('ferramentas_v3')
         .update({
           session_data: sessionData,
           session_updated_at: new Date().toISOString()
@@ -798,7 +813,7 @@ export const DataService = {
 
     try {
       const { data, error } = await supabase
-        .from('profiles')
+        .from('ferramentas_v3')
         .select('session_data, session_updated_at')
         .eq('id', profileId)
         .single();

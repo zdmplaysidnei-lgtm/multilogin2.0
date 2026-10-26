@@ -180,7 +180,7 @@ const App: React.FC = () => {
       }, 2000);
    };
 
-   // OTIMIZAÇÃO DE ELITE: Agora salva apenas o perfil atualizado, não a lista toda.
+   // OTIMIZAÇÃO DE ELITE: Agora salva apenas o perfil atualizado no Supabase com Service Role
    const handleSyncProfileSession = useCallback(async (profileId: string, cookies: string, localStorageData: string) => {
       // 1. Atualiza o estado local para feedback visual imediato
       setProfiles(prevProfiles => {
@@ -192,46 +192,25 @@ const App: React.FC = () => {
          p.id === profileId ? { ...p, cookies, localStorage: localStorageData } : p
       ));
 
-      // 2. Persistência atômica no Supabase (Economiza 99% de banda e evita loops)
-      await DataService.updateSingleProfile(profileId, {
-         cookies,
-         localStorage: localStorageData
-      });
+      // 2. Persistência no Supabase
+      if (window.nebulaAPI?.saveProfileSession) {
+         await window.nebulaAPI.saveProfileSession(profileId, cookies, localStorageData);
+      } else {
+         await DataService.updateSingleProfile(profileId, {
+            cookies,
+            localStorage: localStorageData
+         });
+      }
    }, []);
 
-   // 🔥 NOVA FUNÇÃO: Captura sessão do Chrome nativo e sincroniza via Supabase
+   // 🔥 GRAVAR SESSÃO: Abre a ferramenta e orienta o Admin a salvar no Supabase
    const handleCaptureNativeSession = useCallback(async (profile: Profile) => {
-      if (!window.nebulaAPI?.captureSession) {
-         setToast({ msg: 'Função disponível apenas no app desktop!', type: 'error' });
-         return;
-      }
-
-      setToast({ msg: `📸 Capturando sessão de ${profile.name}...`, type: 'info' });
-
-      try {
-         const targetUrl = (profile.urls && profile.urls.length > 0) ? profile.urls[0] : 'https://google.com';
-
-         // 1. Captura cookies + localStorage do Chrome nativo (via Puppeteer headless)
-         const result = await window.nebulaAPI.captureSession(profile.id, targetUrl);
-
-         if (result.status !== 'success') {
-            setToast({ msg: 'Erro ao capturar sessão: ' + (result.message || 'Unknown'), type: 'error' });
-            return;
-         }
-
-         // 2. Salva sessão no Supabase
-         const success = await DataService.updateProfileSessionData(profile.id, result.sessionData);
-
-         if (success) {
-            setToast({ msg: `✅ Sessão de ${profile.name} sincronizada com a Cloud!`, type: 'success' });
-         } else {
-            setToast({ msg: 'Erro ao salvar sessão no Supabase', type: 'error' });
-         }
-      } catch (err) {
-         console.error('Erro ao capturar sessão:', err);
-         setToast({ msg: 'Erro ao capturar sessão: ' + (err as Error).message, type: 'error' });
-      }
-   }, []);
+      setToast({
+         msg: `🚀 Abrindo ${profile.name}. Faça o login na ferramenta e clique no botão verde "Salvar Sessão no Supabase" no topo para gravar!`,
+         type: 'info'
+      });
+      handleLaunchProfile(profile);
+   }, [handleLaunchProfile]);
 
    const [currentAdIndex, setCurrentAdIndex] = useState(0);
    const [toast, setToast] = useState<{ title?: string; msg: string; type: 'success' | 'error' | 'info' } | null>(null);
