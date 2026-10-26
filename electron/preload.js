@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('nebulaAPI', {
   getWebviewPreload: () => ipcRenderer.invoke('get-webview-preload'),
   clearGoogleSession: (partition) => ipcRenderer.invoke('clear-google-session', partition),
+  cleanStaleGoogleHandshake: (partition) => ipcRenderer.invoke('clean-stale-google-handshake', partition),
   launchProfile: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile', profile, customBrowserPath),
   launchProfileNative: (profile, customBrowserPath) => ipcRenderer.invoke('launch-profile-native', profile, customBrowserPath),
   registerCss: (partition, customCSS) => ipcRenderer.send('register-css', { partition, customCSS }),

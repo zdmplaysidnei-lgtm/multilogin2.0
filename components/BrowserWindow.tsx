@@ -94,6 +94,9 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
         const partition = "persist:" + profile.id;
         try {
           await window.nebulaAPI.setProxy(profile.proxy || '', partition);
+          if (window.nebulaAPI?.cleanStaleGoogleHandshake) {
+            await window.nebulaAPI.cleanStaleGoogleHandshake(partition);
+          }
           if (profile.cookies) {
             await window.nebulaAPI.setCookies(profile.cookies, partition);
           }
@@ -845,6 +848,15 @@ export const BrowserWindow: React.FC<BrowserWindowProps> = ({ profile, isVisible
       };
 
       webview.addEventListener('dom-ready', handleDomReady);
+      webview.addEventListener('did-navigate', (e: any) => {
+        const navUrl = e.url || '';
+        if (navUrl.includes('signin/rejected') || navUrl.includes('rrk=46')) {
+          console.warn('[Google Sign-In] Rejeição detectada. Destravando partição automaticamente...');
+          window.nebulaAPI?.clearGoogleSession?.("persist:" + profile.id).then(() => {
+            webview.loadURL('https://accounts.google.com');
+          });
+        }
+      });
       webview.addEventListener('did-start-loading', () => { if (idx === activeTabIndex) setIsLoading(true); });
       webview.addEventListener('did-stop-loading', () => {
         if (idx === activeTabIndex) {

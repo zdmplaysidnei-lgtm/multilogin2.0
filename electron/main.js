@@ -1568,6 +1568,47 @@ async function attachCDPDownloadListener(browser) {
 }
 
 function registerIPCHandlers() {
+    ipcMain.handle('clean-stale-google-handshake', async (event, partition) => {
+        try {
+            if (!partition) return { status: 'error' };
+            const ses = session.fromPartition(partition);
+            const cookies = await ses.cookies.get({});
+            const hasActiveLogin = cookies.some(c => (c.name === 'SID' || c.name === 'SSID') && c.domain.includes('google.com'));
+            if (!hasActiveLogin) {
+                for (const c of cookies) {
+                    if (c.domain.includes('google.com') || c.domain.includes('youtube.com')) {
+                        const protocol = c.secure ? 'https://' : 'http://';
+                        const domain = c.domain.startsWith('.') ? c.domain.slice(1) : c.domain;
+                        await ses.cookies.remove(`${protocol}${domain}${c.path}`, c.name);
+                    }
+                }
+                await ses.clearStorageData({
+                    origins: ['https://accounts.google.com'],
+                    storages: ['serviceworkers', 'cachestorage']
+                });
+            }
+            return { status: 'success', hasActiveLogin };
+        } catch (err) {
+            return { status: 'error', message: err.message };
+        }
+    });
+
+    ipcMain.handle('delete-profile-folder', async (event, profileId) => {
+        try {
+            if (!profileId) return { status: 'error' };
+            const part = 'persist:' + profileId;
+            const ses = session.fromPartition(part);
+            await ses.clearStorageData();
+            const partPath = path.join(app.getPath('userData'), 'Partitions', profileId);
+            if (fs.existsSync(partPath)) fs.rmSync(partPath, { recursive: true, force: true });
+            const profilePath = path.join(app.getPath('userData'), 'profiles', profileId);
+            if (fs.existsSync(profilePath)) fs.rmSync(profilePath, { recursive: true, force: true });
+            return { status: 'success' };
+        } catch (err) {
+            return { status: 'error', message: err.message };
+        }
+    });
+
     ipcMain.handle('clear-google-session', async (event, partition) => {
         try {
             if (!partition) return { status: 'error', message: 'Partition missing' };
